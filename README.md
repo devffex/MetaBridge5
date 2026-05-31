@@ -162,12 +162,15 @@ Instead of installing MetaTrader 5 inside the container (which requires interact
 On a **Windows 10 64-bit** machine:
 
 1. Download the MetaTrader 5 installer from the official MQL5 website.
-2. Run the installer and change the installation path to `C:\MetaTrader5`.
-3. Launch MetaTrader 5, log into your broker account, configure your charts, indicators, and Expert Advisors.
-4. Close MetaTrader 5 completely (including the system tray icon).
-5. Create a file named `portable` (no extension) in the `C:\MetaTrader5` root directory. This tells MT5 to store all data (profiles, logs, configs) within the installation folder itself instead of `%APPDATA%`.
-6. Launch MetaTrader 5 again to verify it runs in portable mode — all data files should now appear inside `C:\MetaTrader5`.
-7. Close MetaTrader 5 and copy the entire `C:\MetaTrader5` folder to the root of this project as `MetaTrader5/`.
+2. Run the installer and set the installation path to `C:\MetaTrader5`.
+3. Close MetaTrader 5 completely after installation finishes (including the system tray icon).
+4. Relaunch in portable mode from the command line:
+   ```cmd
+   C:\MetaTrader5\terminal64.exe /portable
+   ```
+   The `/portable` flag tells MT5 to store all data (profiles, logs, configs) within the installation folder itself instead of `%APPDATA%`.
+5. With MT5 running in portable mode, log into your broker account, configure your charts, indicators, and Expert Advisors.
+6. Close MetaTrader 5 completely and copy the entire `C:\MetaTrader5` folder to the root of this project as `MetaTrader5/`.
 
 The resulting project structure:
 
@@ -179,9 +182,9 @@ savisor-node/
 │   └── supervisord.conf
 └── MetaTrader5/
     ├── terminal64.exe
-    ├── portable
     ├── MQL5/
-    ├── config/
+    ├── Config/
+    ├── Profiles/
     ├── logs/
     └── ...
 ```
