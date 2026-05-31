@@ -45,17 +45,8 @@ COPY supervisord/supervisord.conf /etc/supervisord.conf
 # Copy portable MetaTrader 5 into the Wine C: drive
 COPY --chown=wine:wine MetaTrader5/ /home/wine/.wine/drive_c/MetaTrader5/
 
-# Pre-initialize Wine prefix as the wine user during build
 USER wine
 WORKDIR /home/wine
-RUN Xvfb :1 -screen 0 1024x768x16 & \
-    XVFB_PID=$! && \
-    sleep 2 && \
-    wineboot --init && \
-    wineserver -w && \
-    kill $XVFB_PID && \
-    rm -rf /home/wine/.wine/drive_c/windows/temp/* \
-           /home/wine/.wine/drive_c/windows/logs/*
 
 EXPOSE 5900
 
