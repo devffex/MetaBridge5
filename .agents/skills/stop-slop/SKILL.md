@@ -35,7 +35,7 @@ To ensure that generated documentation, files, and chat messages look elegant, p
 - **Rule**: Keep headings short (2-4 words). Headings should never be full sentences or read like announcements.
 
 ### 3. Bullet Points & Lists
-- **Rule**: Keep list items concise. Bullet points should represent dense, high-impact statements. 
+- **Rule**: Keep list items concise. Bullet points should represent dense, high-impact statements.
 - **Rule**: Avoid wrapped lines for bullet points wherever possible. If a list item exceeds 20 words, it should likely be a regular paragraph or broken down.
 - **Rule**: Use bold text at the beginning of a bullet point only if it improves scanning, and avoid hype-laden adjectives.
 
