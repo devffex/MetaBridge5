@@ -83,8 +83,14 @@ COPY --chown=wine:wine MetaTrader5/ /home/wine/.wine/drive_c/MetaTrader5/
 USER wine
 WORKDIR /home/wine
 
-# Initialize Wine Prefix
-RUN wineboot --init
+# Initialize Wine Prefix and apply the modern flat light theme
+RUN wineboot --init && \
+    wine reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize" /v AppsUseLightTheme /t REG_DWORD /d 1 /f && \
+    wine reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize" /v SystemUsesLightTheme /t REG_DWORD /d 1 /f && \
+    wine reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\ThemeManager" /v ThemeActive /t REG_SZ /d "1" /f && \
+    wine reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\ThemeManager" /v DllName /t REG_SZ /d "C:\\windows\\resources\\themes\\light\\light.msstyles" /f && \
+    wine reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\ThemeManager" /v ColorName /t REG_SZ /d "NormalColor" /f && \
+    wine reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\ThemeManager" /v SizeName /t REG_SZ /d "NormalSize" /f
 
 # Copy the prepared Windows Python and pre-downloaded wheels from Stage 2
 COPY --chown=wine:wine --from=python-builder /tmp/python/ /home/wine/.wine/drive_c/python/
