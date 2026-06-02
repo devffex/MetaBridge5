@@ -16,22 +16,6 @@ logger = logging.getLogger("api")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager to handle MT5 initialization and shutdown."""
-    logger.info("Initializing MetaTrader 5 connection on startup...")
-    initialized = False
-    try:
-        initialized = mt5.initialize()
-    except Exception as e:
-        logger.error(f"Exception during MT5 initialization: {e}")
-
-    if initialized:
-        logger.info("MetaTrader 5 initialized successfully.")
-    else:
-        logger.warning(
-            "MetaTrader 5 failed to initialize! The terminal may not be running "
-            "yet or it is run in an incompatible environment. FastAPI will still "
-            "start up to allow health check monitoring and diagnostics."
-        )
-
     yield
 
     logger.info("Shutting down MetaTrader 5 connection...")

@@ -38,8 +38,10 @@ RUN unzip -o /tmp/wheels/pip-*.whl -d /tmp/python/Lib/site-packages/ && \
     unzip -o /tmp/wheels/setuptools-*.whl -d /tmp/python/Lib/site-packages/ && \
     unzip -o /tmp/wheels/wheel-*.whl -d /tmp/python/Lib/site-packages/
 
+
+
 # ==========================================
-# STAGE 3: Final Runtime Image
+# STAGE 4: Final Runtime Image
 # ==========================================
 FROM alpine:latest
 
@@ -54,7 +56,11 @@ RUN apk add --no-cache --repository http://dl-cdn.alpinelinux.org/alpine/edge/co
     wine \
     curl \
     unzip \
-    gnutls
+    gnutls \
+    ca-certificates \
+    tzdata \
+    xdotool \
+    libfaketime
 
 # Set up user and environment variables for Wine
 ENV WINEPREFIX=/home/wine/.wine
@@ -73,35 +79,54 @@ COPY --from=font-builder /usr/share/fonts/truetype/msttcorefonts/ /usr/share/fon
 # Rebuild font cache
 RUN fc-cache -f
 
-# Copy supervisord configuration
+# Copy supervisord configuration and helper scripts
 COPY supervisord/supervisord.conf /etc/supervisord.conf
+COPY --chown=wine:wine supervisord/dismiss_dialogs.sh /home/wine/dismiss_dialogs.sh
+RUN chmod +x /home/wine/dismiss_dialogs.sh
 
-# Copy portable MetaTrader 5 into the Wine C: drive
+# Copy portable MetaTrader 5 from host
 COPY --chown=wine:wine MetaTrader5/ /home/wine/.wine/drive_c/MetaTrader5/
+
+# Configure system timezone name for Wine's timezone auto-detection
+RUN echo "UTC" > /etc/timezone
+
+# Clean up any pre-baked host-specific terminal license and account cache to ensure clean broker TLS handshakes
+RUN rm -f /home/wine/.wine/drive_c/MetaTrader5/Config/terminal.lic \
+          /home/wine/.wine/drive_c/MetaTrader5/Config/accounts.dat
 
 # Perform setup tasks as the wine user
 USER wine
 WORKDIR /home/wine
 
-# Initialize Wine Prefix and apply the modern flat light theme
+# Initialize Wine Prefix and apply the modern flat light theme, and register cryptographic providers
 RUN wineboot --init && \
     wine reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize" /v AppsUseLightTheme /t REG_DWORD /d 1 /f && \
     wine reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize" /v SystemUsesLightTheme /t REG_DWORD /d 1 /f && \
     wine reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\ThemeManager" /v ThemeActive /t REG_SZ /d "1" /f && \
     wine reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\ThemeManager" /v DllName /t REG_SZ /d "C:\\windows\\resources\\themes\\light\\light.msstyles" /f && \
     wine reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\ThemeManager" /v ColorName /t REG_SZ /d "NormalColor" /f && \
-    wine reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\ThemeManager" /v SizeName /t REG_SZ /d "NormalSize" /f
+    wine reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\ThemeManager" /v SizeName /t REG_SZ /d "NormalSize" /f && \
+    wine reg add "HKLM\\Software\\Microsoft\\Cryptography\\Defaults\\Provider Types\\Type 024" /v Name /t REG_SZ /d "Microsoft Enhanced RSA and AES Cryptographic Provider" /f && \
+    wine reg add "HKLM\\Software\\Microsoft\\Cryptography\\Defaults\\Provider Types\\Type 024" /v TypeName /t REG_SZ /d "RSA Full and AES" /f && \
+    wine reg add "HKLM\\Software\\Microsoft\\Cryptography\\Defaults\\Provider\\Microsoft Enhanced RSA and AES Cryptographic Provider" /v "Image Path" /t REG_SZ /d "rsaenh.dll" /f && \
+    wine reg add "HKLM\\Software\\Microsoft\\Cryptography\\Defaults\\Provider\\Microsoft Enhanced RSA and AES Cryptographic Provider" /v Type /t REG_DWORD /d 24 /f && \
+    wine reg add "HKLM\\Software\\Microsoft\\Cryptography\\Defaults\\Provider\\Microsoft Enhanced RSA and AES Cryptographic Provider" /v SigInFile /t REG_DWORD /d 0 /f && \
+    wineserver -w
 
 # Copy the prepared Windows Python and pre-downloaded wheels from Stage 2
 COPY --chown=wine:wine --from=python-builder /tmp/python/ /home/wine/.wine/drive_c/python/
 COPY --chown=wine:wine --from=python-builder /tmp/wheels/ /home/wine/.wine/drive_c/wheels/
 
-# Install the dependencies offline in Wine Python
-RUN wine C:\\python\\python.exe -m pip install --no-index --find-links C:\\wheels \
+# Install the dependencies offline in Wine Python with no-cache-dir to minimize size
+RUN wine C:\\python\\python.exe -m pip install --no-cache-dir --no-index --find-links C:\\wheels \
     fastapi uvicorn pydantic numpy pandas MetaTrader5
 
 # Clean up wheels to reduce final image size
 RUN rm -rf /home/wine/.wine/drive_c/wheels
+
+# Copy and run certificate importer to register Alpine root CAs inside Wine
+COPY --chown=wine:wine import_certs.py /home/wine/.wine/drive_c/import_certs.py
+RUN wine C:\\python\\python.exe C:\\import_certs.py && rm /home/wine/.wine/drive_c/import_certs.py && wineserver -w
 
 # Copy the API codebase into /home/wine/app
 COPY --chown=wine:wine api/ /home/wine/app/api/

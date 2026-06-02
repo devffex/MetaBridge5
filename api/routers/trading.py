@@ -174,6 +174,9 @@ except ImportError:
 
         def terminal_info(self, *args, **kwargs):
             class Info:
+                def __init__(self):
+                    self.connected = True
+
                 def _asdict(self):
                     return {
                         "community_account": True,
@@ -204,6 +207,9 @@ except ImportError:
 
         def account_info(self, *args, **kwargs):
             class Info:
+                def __init__(self):
+                    self.login = 25115284
+
                 def _asdict(self):
                     return {
                         "login": 25115284,
@@ -605,6 +611,30 @@ async def run_mt5_op(
     """Executes a MetaTrader5 operation in a separate thread
     and converts the response.
     """
+    # Dynamic on-demand initialization check
+    try:
+        if op != "initialize":
+            info = mt5.terminal_info()
+            if info is None:
+                logger.info("MT5 connection not initialized. Initializing on-demand...")
+                # Connect in a separate thread to avoid blocking the main event loop
+                init_ok = await asyncio.to_thread(mt5.initialize)
+                if not init_ok:
+                    err = mt5.last_error()
+                    logger.warning(f"On-demand MT5 initialization failed: {err}")
+    except Exception as e:
+        logger.warning(f"Exception during dynamic MT5 initialization: {e}")
+
+    # Enforce active manual authentication for operational commands
+    if op not in ("initialize", "terminal_info", "version", "last_error"):
+        info = mt5.terminal_info()
+        acct = mt5.account_info()
+        if info is None or not getattr(info, "connected", False) or acct is None or getattr(acct, "login", 0) == 0:
+            raise HTTPException(
+                status_code=412,
+                detail="Terminal not authenticated. Please log in manually to your broker account via VNC first."
+            )
+
     op_func = getattr(mt5, op, None)
     if op_func is None:
         raise HTTPException(
@@ -736,31 +766,12 @@ router = APIRouter(prefix="/api/v1/terminals", tags=["trading"])
 # ---------------------------------------------------------
 
 
-@router.post("/{org}/{trader}/{broker}/{account}/authenticate")
-async def authenticate(
-    org: str,
-    trader: str,
-    broker: str,
-    account: str,
-    payload: AuthenticationRequest,
-):
-    """Bridge switch account on the MetaTrader 5 terminal."""
-    params = payload.model_dump(exclude_none=True)
-    result = await run_mt5_op("login", params)
-    if result is False:
-        raise HTTPException(status_code=401, detail="Authentication failed")
-    return {"status": "success", "message": f"Authenticated to account {payload.login}"}
 
 
 @router.post(
-    "/{org}/{trader}/{broker}/{account}/trade/order", response_model=OrderSendResult
+    "/trade/order", response_model=OrderSendResult
 )
-async def send_order(
-    org: str,
-    trader: str,
-    broker: str,
-    account: str,
-    payload: TradeRequest,
+async def send_order(payload: TradeRequest,
 ):
     """Send a trade order."""
     params = payload.model_dump(exclude_none=True)
@@ -774,15 +785,10 @@ async def send_order(
 
 
 @router.post(
-    "/{org}/{trader}/{broker}/{account}/trade/order/check",
+    "/trade/order/check",
     response_model=OrderCheckResult,
 )
-async def check_order(
-    org: str,
-    trader: str,
-    broker: str,
-    account: str,
-    payload: TradeRequest,
+async def check_order(payload: TradeRequest,
 ):
     """Check margin sufficiency for a trade order."""
     params = payload.model_dump(exclude_none=True)
@@ -796,15 +802,10 @@ async def check_order(
 
 
 @router.post(
-    "/{org}/{trader}/{broker}/{account}/trade/order/calc/profit",
+    "/trade/order/calc/profit",
     response_model=OrderCalcProfitResponse,
 )
-async def calc_order_profit(
-    org: str,
-    trader: str,
-    broker: str,
-    account: str,
-    payload: OrderCalcProfitRequest,
+async def calc_order_profit(payload: OrderCalcProfitRequest,
 ):
     """Estimate profit for a trading operation."""
     params = payload.model_dump()
@@ -815,15 +816,10 @@ async def calc_order_profit(
 
 
 @router.post(
-    "/{org}/{trader}/{broker}/{account}/trade/order/calc/margin",
+    "/trade/order/calc/margin",
     response_model=OrderCalcMarginResponse,
 )
-async def calc_order_margin(
-    org: str,
-    trader: str,
-    broker: str,
-    account: str,
-    payload: OrderCalcMarginRequest,
+async def calc_order_margin(payload: OrderCalcMarginRequest,
 ):
     """Estimate margin for a trading operation."""
     params = payload.model_dump()
@@ -834,15 +830,10 @@ async def calc_order_margin(
 
 
 @router.get(
-    "/{org}/{trader}/{broker}/{account}/trade/positions",
+    "/trade/positions",
     response_model=PositionsResponse,
 )
-async def get_positions(
-    org: str,
-    trader: str,
-    broker: str,
-    account: str,
-    symbol: str | None = Query(None, description="Filter positions by symbol"),
+async def get_positions(symbol: str | None = Query(None, description="Filter positions by symbol"),
     group: str | None = Query(None, description="Filter positions by group"),
     ticket: int | None = Query(None, description="Filter positions by ticket"),
 ):
@@ -869,15 +860,10 @@ async def get_positions(
 
 
 @router.get(
-    "/{org}/{trader}/{broker}/{account}/trade/positions/total",
+    "/trade/positions/total",
     response_model=PositionsTotalResponse,
 )
-async def get_positions_total(
-    org: str,
-    trader: str,
-    broker: str,
-    account: str,
-):
+async def get_positions_total():
     """Get the number of active positions."""
     result = await run_mt5_op("positions_total", {})
     if result is None:
@@ -886,74 +872,49 @@ async def get_positions_total(
 
 
 @router.get(
-    "/{org}/{trader}/{broker}/{account}/trade/terminal/info",
+    "/trade/terminal/info",
     response_model=TerminalInfoResponse,
 )
-async def get_terminal_info(
-    org: str,
-    trader: str,
-    broker: str,
-    account: str,
-):
+async def get_terminal_info():
     """Get the connected MetaTrader 5 client terminal status and settings."""
     result = await run_mt5_op("terminal_info", {})
     return TerminalInfoResponse(**result)
 
 
 @router.get(
-    "/{org}/{trader}/{broker}/{account}/trade/account",
+    "/trade/account",
     response_model=AccountInfoResponse,
 )
-async def get_account_info(
-    org: str,
-    trader: str,
-    broker: str,
-    account: str,
-):
+async def get_account_info():
     """Get info on the current trading account."""
     result = await run_mt5_op("account_info", {})
     return AccountInfoResponse(**result)
 
 
 @router.get(
-    "/{org}/{trader}/{broker}/{account}/trade/version", response_model=VersionResponse
+    "/trade/version", response_model=VersionResponse
 )
-async def get_version(
-    org: str,
-    trader: str,
-    broker: str,
-    account: str,
-):
+async def get_version():
     """Return the MetaTrader 5 terminal version."""
     result = await run_mt5_op("version", {})
     return VersionResponse(version=result[0], build=result[1], release_date=result[2])
 
 
 @router.get(
-    "/{org}/{trader}/{broker}/{account}/trade/last-error",
+    "/trade/last-error",
     response_model=LastErrorResponse,
 )
-async def get_last_error(
-    org: str,
-    trader: str,
-    broker: str,
-    account: str,
-):
+async def get_last_error():
     """Return data on the last error."""
     result = await run_mt5_op("last_error", {})
     return LastErrorResponse(code=result[0], description=result[1])
 
 
 @router.post(
-    "/{org}/{trader}/{broker}/{account}/trade/history/deals",
+    "/trade/history/deals",
     response_model=HistoryDealsResponse,
 )
-async def get_history_deals(
-    org: str,
-    trader: str,
-    broker: str,
-    account: str,
-    payload: HistoryDealsRequest,
+async def get_history_deals(payload: HistoryDealsRequest,
 ):
     """Get deals from trading history."""
     params = {}
@@ -974,15 +935,10 @@ async def get_history_deals(
 
 
 @router.post(
-    "/{org}/{trader}/{broker}/{account}/trade/history/deals/total",
+    "/trade/history/deals/total",
     response_model=HistoryDealsTotalResponse,
 )
-async def get_history_deals_total(
-    org: str,
-    trader: str,
-    broker: str,
-    account: str,
-    payload: HistoryDealsTotalRequest,
+async def get_history_deals_total(payload: HistoryDealsTotalRequest,
 ):
     """Get the number of deals from trading history."""
     params = {
@@ -996,15 +952,10 @@ async def get_history_deals_total(
 
 
 @router.post(
-    "/{org}/{trader}/{broker}/{account}/trade/history/orders",
+    "/trade/history/orders",
     response_model=HistoryOrdersResponse,
 )
-async def get_history_orders(
-    org: str,
-    trader: str,
-    broker: str,
-    account: str,
-    payload: HistoryOrdersRequest,
+async def get_history_orders(payload: HistoryOrdersRequest,
 ):
     """Get orders from trading history."""
     params = {}
@@ -1025,15 +976,10 @@ async def get_history_orders(
 
 
 @router.post(
-    "/{org}/{trader}/{broker}/{account}/trade/history/orders/total",
+    "/trade/history/orders/total",
     response_model=HistoryOrdersTotalResponse,
 )
-async def get_history_orders_total(
-    org: str,
-    trader: str,
-    broker: str,
-    account: str,
-    payload: HistoryOrdersTotalRequest,
+async def get_history_orders_total(payload: HistoryOrdersTotalRequest,
 ):
     """Get the number of orders from trading history."""
     params = {
@@ -1047,15 +993,10 @@ async def get_history_orders_total(
 
 
 @router.get(
-    "/{org}/{trader}/{broker}/{account}/trade/orders/total",
+    "/trade/orders/total",
     response_model=OrdersTotalResponse,
 )
-async def get_orders_total(
-    org: str,
-    trader: str,
-    broker: str,
-    account: str,
-):
+async def get_orders_total():
     """Get the number of active orders."""
     result = await run_mt5_op("orders_total", {})
     if result is None:
@@ -1064,14 +1005,9 @@ async def get_orders_total(
 
 
 @router.get(
-    "/{org}/{trader}/{broker}/{account}/trade/orders", response_model=OrdersGetResponse
+    "/trade/orders", response_model=OrdersGetResponse
 )
-async def get_orders(
-    org: str,
-    trader: str,
-    broker: str,
-    account: str,
-    symbol: str | None = Query(None, description="Filter orders by symbol"),
+async def get_orders(symbol: str | None = Query(None, description="Filter orders by symbol"),
     group: str | None = Query(None, description="Filter orders by group"),
     ticket: int | None = Query(None, description="Filter orders by ticket"),
 ):
@@ -1098,15 +1034,10 @@ async def get_orders(
 
 
 @router.post(
-    "/{org}/{trader}/{broker}/{account}/trade/market/ticks/range",
+    "/trade/market/ticks/range",
     response_model=CopyTicksResponse,
 )
-async def copy_ticks_range(
-    org: str,
-    trader: str,
-    broker: str,
-    account: str,
-    payload: CopyTicksRangeRequest,
+async def copy_ticks_range(payload: CopyTicksRangeRequest,
 ):
     """Get ticks for the specified date range."""
     params = {
@@ -1122,15 +1053,10 @@ async def copy_ticks_range(
 
 
 @router.post(
-    "/{org}/{trader}/{broker}/{account}/trade/market/ticks/from",
+    "/trade/market/ticks/from",
     response_model=CopyTicksResponse,
 )
-async def copy_ticks_from(
-    org: str,
-    trader: str,
-    broker: str,
-    account: str,
-    payload: CopyTicksFromRequest,
+async def copy_ticks_from(payload: CopyTicksFromRequest,
 ):
     """Get ticks starting from the specified date."""
     params = {
@@ -1146,15 +1072,10 @@ async def copy_ticks_from(
 
 
 @router.post(
-    "/{org}/{trader}/{broker}/{account}/trade/market/rates/range",
+    "/trade/market/rates/range",
     response_model=CopyRatesResponse,
 )
-async def copy_rates_range(
-    org: str,
-    trader: str,
-    broker: str,
-    account: str,
-    payload: CopyRatesRangeRequest,
+async def copy_rates_range(payload: CopyRatesRangeRequest,
 ):
     """Get bars in the specified date range."""
     params = {
@@ -1170,15 +1091,10 @@ async def copy_rates_range(
 
 
 @router.post(
-    "/{org}/{trader}/{broker}/{account}/trade/market/rates/from-pos",
+    "/trade/market/rates/from-pos",
     response_model=CopyRatesResponse,
 )
-async def copy_rates_from_pos(
-    org: str,
-    trader: str,
-    broker: str,
-    account: str,
-    payload: CopyRatesFromPosRequest,
+async def copy_rates_from_pos(payload: CopyRatesFromPosRequest,
 ):
     """Get bars from the specified index position."""
     params = {
@@ -1194,15 +1110,10 @@ async def copy_rates_from_pos(
 
 
 @router.post(
-    "/{org}/{trader}/{broker}/{account}/trade/market/rates/from",
+    "/trade/market/rates/from",
     response_model=CopyRatesResponse,
 )
-async def copy_rates_from(
-    org: str,
-    trader: str,
-    broker: str,
-    account: str,
-    payload: CopyRatesFromRequest,
+async def copy_rates_from(payload: CopyRatesFromRequest,
 ):
     """Get bars starting from the specified date."""
     params = {
@@ -1218,15 +1129,10 @@ async def copy_rates_from(
 
 
 @router.post(
-    "/{org}/{trader}/{broker}/{account}/trade/market/book/add",
+    "/trade/market/book/add",
     response_model=MarketBookActionResponse,
 )
-async def market_book_add(
-    org: str,
-    trader: str,
-    broker: str,
-    account: str,
-    payload: MarketBookRequest,
+async def market_book_add(payload: MarketBookRequest,
 ):
     """Subscribes the terminal to Market Depth change events for a specified symbol."""
     params = {"symbol": payload.symbol}
@@ -1237,15 +1143,10 @@ async def market_book_add(
 
 
 @router.post(
-    "/{org}/{trader}/{broker}/{account}/trade/market/book/release",
+    "/trade/market/book/release",
     response_model=MarketBookActionResponse,
 )
-async def market_book_release(
-    org: str,
-    trader: str,
-    broker: str,
-    account: str,
-    payload: MarketBookRequest,
+async def market_book_release(payload: MarketBookRequest,
 ):
     """Unsubscribes the terminal from Market Depth change events
     for a specified symbol.
@@ -1258,15 +1159,10 @@ async def market_book_release(
 
 
 @router.get(
-    "/{org}/{trader}/{broker}/{account}/trade/market/book/get",
+    "/trade/market/book/get",
     response_model=MarketBookGetResponse,
 )
-async def market_book_get(
-    org: str,
-    trader: str,
-    broker: str,
-    account: str,
-    symbol: str = Query(..., description="Symbol name"),
+async def market_book_get(symbol: str = Query(..., description="Symbol name"),
 ):
     """Returns a tuple of BookInfo objects containing market depth information."""
     params = {"symbol": symbol}
@@ -1277,15 +1173,10 @@ async def market_book_get(
 
 
 @router.post(
-    "/{org}/{trader}/{broker}/{account}/trade/symbols/select",
+    "/trade/symbols/select",
     response_model=SymbolSelectResponse,
 )
-async def symbol_select(
-    org: str,
-    trader: str,
-    broker: str,
-    account: str,
-    payload: SymbolSelectRequest,
+async def symbol_select(payload: SymbolSelectRequest,
 ):
     """Select a symbol in the Market Watch window."""
     params = payload.model_dump()
@@ -1294,30 +1185,20 @@ async def symbol_select(
 
 
 @router.get(
-    "/{org}/{trader}/{broker}/{account}/trade/symbols/total",
+    "/trade/symbols/total",
     response_model=SymbolsTotalResponse,
 )
-async def get_symbols_total(
-    org: str,
-    trader: str,
-    broker: str,
-    account: str,
-):
+async def get_symbols_total():
     """Get the number of financial instruments."""
     result = await run_mt5_op("symbols_total", {})
     return SymbolsTotalResponse(total=result)
 
 
 @router.get(
-    "/{org}/{trader}/{broker}/{account}/trade/symbols",
+    "/trade/symbols",
     response_model=SymbolsGetResponse,
 )
-async def get_symbols(
-    org: str,
-    trader: str,
-    broker: str,
-    account: str,
-    group: str | None = Query(None, description="Group name filter"),
+async def get_symbols(group: str | None = Query(None, description="Group name filter"),
 ):
     """Get all financial instruments (filterable by group)."""
     params = {}
@@ -1330,15 +1211,10 @@ async def get_symbols(
 
 
 @router.post(
-    "/{org}/{trader}/{broker}/{account}/trade/symbols/info",
+    "/trade/symbols/info",
     response_model=SymbolInfoResponse,
 )
-async def get_symbol_info(
-    org: str,
-    trader: str,
-    broker: str,
-    account: str,
-    payload: SymbolInfoRequest,
+async def get_symbol_info(payload: SymbolInfoRequest,
 ):
     """Get data on a financial instrument."""
     params = payload.model_dump()
@@ -1351,15 +1227,10 @@ async def get_symbol_info(
 
 
 @router.post(
-    "/{org}/{trader}/{broker}/{account}/trade/symbols/info/tick",
+    "/trade/symbols/info/tick",
     response_model=TickResponse,
 )
-async def get_symbol_info_tick(
-    org: str,
-    trader: str,
-    broker: str,
-    account: str,
-    payload: SymbolInfoTickRequest,
+async def get_symbol_info_tick(payload: SymbolInfoTickRequest,
 ):
     """Get the last tick for a financial instrument."""
     params = payload.model_dump()

@@ -26,7 +26,7 @@ def test_health_check():
 
 def test_get_account_info():
     response = client.get(
-        "/api/v1/terminals/savisor/julio/exness/198386280/trade/account"
+        "/api/v1/terminals/trade/account"
     )
     assert response.status_code == 200
     data = response.json()
@@ -37,7 +37,7 @@ def test_get_account_info():
 
 def test_get_positions():
     response = client.get(
-        "/api/v1/terminals/savisor/julio/exness/198386280/trade/positions"
+        "/api/v1/terminals/trade/positions"
     )
     assert response.status_code == 200
     data = response.json()
