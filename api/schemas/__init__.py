@@ -67,6 +67,7 @@ from .symbols import (
 )
 from .terminal import (
     AccountInfoResponse,
+    AuthenticationRequest,
     LastErrorResponse,
     TerminalInfoResponse,
     VersionResponse,
@@ -74,6 +75,7 @@ from .terminal import (
 
 __all__ = [
     "AccountInfoResponse",
+    "AuthenticationRequest",
     "BookInfo",
     "BookType",
     "CopyRatesFromPosRequest",

@@ -136,6 +136,10 @@ RUN wine C:\\python\\python.exe C:\\import_certs.py && rm /home/wine/.wine/drive
 # Copy the API codebase into /home/wine/app
 COPY --chown=wine:wine api/ /home/wine/app/api/
 
+# Copy and configure the container startup entrypoint script
+COPY --chown=wine:wine supervisord/entrypoint.sh /home/wine/entrypoint.sh
+RUN chmod +x /home/wine/entrypoint.sh
+
 EXPOSE 5900 8000
 
-ENTRYPOINT ["/usr/bin/supervisord", "-c", "/etc/supervisord.conf"]
+ENTRYPOINT ["/home/wine/entrypoint.sh"]

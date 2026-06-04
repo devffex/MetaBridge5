@@ -1,8 +1,10 @@
 import logging
+import shutil
 from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import Depends, FastAPI
+from fastapi.responses import JSONResponse
 
 from auth import enforce_api_key_configured, require_api_key
 
@@ -58,10 +60,42 @@ def read_root() -> dict[str, Any]:
 
 
 @app.get("/health")
-def health_check() -> dict[str, str]:
-    """Simple health check endpoint.
+def health_check() -> Any:
+    """Health check endpoint exposing native disk space and MT5 connection status.
 
-    Unauthenticated — used by container orchestrators for liveness probes.
+    Unauthenticated — used by container orchestrators and metrics collection.
     """
     logger.info("Health check endpoint accessed")
-    return {"status": "ok"}
+
+    # 1. Get disk space metrics using standard shutil (works on Linux/Windows/Wine)
+    try:
+        total, used, free = shutil.disk_usage("/")
+        disk_stats = {"total": total, "used": used, "free": free}
+    except Exception as e:
+        logger.error(f"Failed to read disk space: {e}")
+        disk_stats = {"total": 0, "used": 0, "free": 0}
+
+    # 2. Get MT5 connection state
+    mt5_connected = False
+    mt5_login = 0
+    try:
+        info = mt5.terminal_info()
+        if info is not None:
+            mt5_connected = getattr(info, "connected", False)
+        acct = mt5.account_info()
+        if acct is not None:
+            mt5_login = getattr(acct, "login", 0)
+    except Exception as e:
+        logger.warning(f"Error checking MT5 terminal info during health check: {e}")
+
+    content = {
+        "status": "ok" if mt5_connected else "degraded",
+        "mt5_connected": mt5_connected,
+        "mt5_login": mt5_login,
+        "disk": disk_stats,
+    }
+
+    if not mt5_connected:
+        return JSONResponse(status_code=503, content=content)
+
+    return content
