@@ -4,6 +4,71 @@ Savisor Node runs an isolated MetaTrader 5 (MT5) terminal under Wine in a lightw
 
 ## System Architecture
 
+```mermaid
+graph TD
+    %% Define Styles for Nodes
+    classDef client fill:#f9f9f9,stroke:#333,stroke-width:2px;
+    classDef internal fill:#fff,stroke:#0288d1,stroke-dasharray: 5 5;
+    classDef wine fill:#efebe9,stroke:#5d4037,stroke-width:2px;
+    classDef broker fill:#ffe0b2,stroke:#f57c00,stroke-width:2px;
+
+    subgraph Clients ["Client Space"]
+        Client["External API Client / Agent"]:::client
+        Admin["VNC Viewer (GUI Admin)"]:::client
+    end
+
+    subgraph Docker ["Alpine Linux Docker Container"]
+        direction TB
+        
+        entrypoint["entrypoint.sh (Entrypoint Guard)"]:::internal
+        supervisord["supervisord (Process Orchestrator)"]:::internal
+
+        subgraph DisplayVirtualization ["Headless GUI Virtualization (Display :1)"]
+            Xvfb["X Virtual Framebuffer (Xvfb)"]:::internal
+            x11vnc["x11vnc Server (Port 5900)"]:::internal
+            dismisser["dismiss_dialogs.sh (xdotool closer)"]:::internal
+        end
+
+        subgraph WineEnv ["Wine 64-bit Emulation Prefix"]
+            FastAPI["FastAPI REST API Bridge<br/>(Wine Python - Port 8000)"]:::wine
+            MT5["MetaTrader 5 Terminal<br/>(terminal64.exe /portable)"]:::wine
+            WineRegistry["Wine CryptoAPI Registry<br/>(Imported Alpine Root CAs)"]:::wine
+        end
+    end
+
+    subgraph External ["Broker Infrastructure"]
+        Broker["Broker Trading Server"]:::broker
+    end
+
+    %% Apply Styles to Subgraphs
+    style Clients fill:#f5f5f5,stroke:#333,stroke-width:2px;
+    style Docker fill:#e1f5fe,stroke:#0288d1,stroke-width:2px;
+    style DisplayVirtualization fill:#ffffff,stroke:#0288d1,stroke-dasharray: 5 5;
+    style WineEnv fill:#efebe9,stroke:#5d4037,stroke-width:2px;
+    style External fill:#ffe0b2,stroke:#f57c00,stroke-width:2px;
+
+    %% Connections
+    entrypoint -->|1. Setup environment & secrets| supervisord
+    supervisord -->|2. Orchestrate startup sequence| DisplayVirtualization
+    supervisord -->|3. Run emulation services| WineEnv
+    
+    %% API Traffic
+    Client -->|4. HTTP REST API requests| FastAPI
+    FastAPI -->|5. Native MT5 Python library calls| MT5
+
+    %% VNC Traffic
+    Admin -->|6. Password-protected GUI connection| x11vnc
+    x11vnc <-->|7. Mirrored GUI events| Xvfb
+    
+    %% Internal Interactions
+    MT5 -->|8. Renders GUI output| Xvfb
+    dismisser -->|9. Inspects and closes blocking popups| Xvfb
+    
+    %% Broker Traffic
+    WineRegistry -->|10. CA Certificates for TLS| MT5
+    MT5 <-->|11. Secure broker execution socket| Broker
+```
+
 The container integrates several layers to run and expose the Windows-native MetaTrader 5 client:
 
 **Headless GUI Virtualization**
@@ -85,6 +150,41 @@ savisor-node/
     ├── terminal64.exe
     └── ...
 ```
+## Pre-Flight Checklist
+
+To ensure a smooth launch, run through the following checks before starting the container:
+
+### Phase 1: Pre-Build (Ground Inspection)
+- [ ] **Portable MT5 Files**: Copy the entire `C:\MetaTrader5` folder from a Windows machine to the project root as `MetaTrader5/` (including `terminal64.exe`).
+- [ ] **Host Artifacts Purged**: Delete `MetaTrader5/Config/terminal.lic` and `MetaTrader5/Config/accounts.dat` to prevent connection conflicts.
+- [ ] **Custom Broker CA Certificates**: If your broker requires custom TLS certificates, ensure they are registered in your system root certificate directories before building so they are imported during compilation.
+- [ ] **API/VNC Secrets Prepared**: Choose a configuration method (e.g. environment variables `SAVISOR_API_KEY` and `VNC_PASSWORD`, or `/run/secrets/` mounts).
+
+### Phase 2: Build & Host Check (Taxing to Runway)
+- [ ] **Docker Engine Active**: Verify that the Docker daemon is running and accessible.
+- [ ] **Image Built**: Run the docker build command and ensure it compiles successfully:
+  ```bash
+  docker build -t savisor/savisor-node:latest .
+  ```
+- [ ] **Host Port Availability**: Ensure that host ports `8000` (FastAPI) and `5900` (VNC Viewer) are not currently in use by other processes.
+
+### Phase 3: Launch & Connection (Takeoff)
+- [ ] **Container Booted**: Deploy the container and confirm the supervisor process is running by checking container logs:
+  ```bash
+  docker logs savisor-node
+  ```
+- [ ] **VNC Admin Check**: Connect to `localhost:5900` using a VNC client with your configured `VNC_PASSWORD` to confirm the MT5 GUI is virtualized correctly.
+- [ ] **API Service Health**: Send a health check request to confirm the API is listening:
+  ```bash
+  curl -H "Authorization: Bearer <SAVISOR_API_KEY>" http://localhost:8000/health
+  ```
+- [ ] **Broker Authentication**: Perform the initial POST login to the broker to complete connection alignment:
+  ```bash
+  curl -X POST -H "Authorization: Bearer <SAVISOR_API_KEY>" \
+    -H "Content-Type: application/json" \
+    -d '{"login":123456,"password":"your_password","server":"Broker-Server"}' \
+    http://localhost:8000/api/v1/terminals/trade/login
+  ```
 
 ## Running the Container
 
