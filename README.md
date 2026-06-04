@@ -1,180 +1,35 @@
 # Savisor Node
 
-Reprenset an light weight and isolated metatrader terminal running under wine in a docker linux container. Which expose different interfaces to interact with the terminal with different protocols and process.
+Savisor Node runs an isolated MetaTrader 5 terminal under Wine in a lightweight Alpine Linux Docker container. It exposes a secure FastAPI REST API to programmatically interact with MT5 and a password-protected VNC server for graphical administration.
 
-## Image Builder
+## Features
 
-Each step below shows only the Dockerfile instructions introduced in that stage. The final accumulative Dockerfile is provided at the end.
-
-### Step 1: Define the base image
-
-We use Alpine Linux as the lightweight base image.
-
-```dockerfile
-FROM alpine:latest
-```
-
-#### Why Build from Scratch
-
-- **Minimal Footprint**: Alpine's base image is only 5MB.
-- **Security**: Bare-minimum environment eliminates unnecessary packages and services.
-- **Resource Optimization**: No desktop environments, audio servers, or X11 overhead — enables high container density per host.
-- **Version Control**: Pinned dependency versions prevent automatic breaking updates.
+- **Minimal Footprint**: Alpine-based multi-stage build.
+- **Headless Execution**: Runs MT5 using X Virtual Framebuffer (`Xvfb`) in memory.
+- **Secure REST API**: Fast API key authentication (`Authorization: Bearer <key>`) with timing attack protection.
+- **Secure VNC Access**: Remote desktop mirroring via `x11vnc` with password authentication.
+- **Startup Guard**: Container fails fast if required environment secrets are missing.
+- **Supervisor Orchestration**: Gracefully handles restarts, sequence priority, and standard logging.
 
 ---
 
-### Step 2: Install general purpose deps and libs
+## Prerequisites & Installation
 
-Install basic utilities for automation scripts, downloads, and headless window rendering:
+### 1. Set Up Portable MetaTrader 5
 
-- `bash`: Standard shell for entrypoint scripts.
-- `curl`: Fetches external files over network protocols.
-- `xvfb`: X Virtual Framebuffer — virtual display server in memory.
-- `freetype`: Font-rendering engine for Wine UI text.
-- `fontconfig`: System font configuration and customization.
-- `msttcorefonts-installer`: Microsoft Core Fonts (Arial, Tahoma, etc.).
+To run MT5 under Wine without manual setup inside the container, prepare a **portable installation** folder on a Windows 10/11 64-bit machine:
 
-```dockerfile
-RUN apk add --no-cache --repository http://dl-cdn.alpinelinux.org/alpine/edge/community \
-    bash \
-    curl \
-    xvfb \
-    freetype \
-    fontconfig \
-    msttcorefonts-installer \
-    && update-ms-fonts \
-    && fc-cache -f
-```
-
----
-
-### Step 3: Install wine
-
-Wine is the compatibility layer that maps Windows system calls to POSIX, allowing Windows applications to run on Linux.
-
-```dockerfile
-RUN apk add --no-cache --repository http://dl-cdn.alpinelinux.org/alpine/edge/community wine
-
-ENV WINEPREFIX=/home/wine/.wine
-ENV WINEARCH=win64
-ENV DISPLAY=:1
-
-RUN adduser -D -u 1000 wine && \
-    mkdir -p /home/wine/.wine && \
-    chown -R wine:wine /home/wine
-
-USER wine
-WORKDIR /home/wine
-```
-
----
-
-### Step 4: Setup supervisord
-
-Supervisord manages the execution lifecycles of multiple runtime processes inside the container.
-
-- **Multi-Process Orchestration**: Starts `Xvfb`, VNC, and Wine in a controlled, prioritized sequence.
-- **Process Monitoring & Restarts**: Automatically restarts crashed processes.
-- **Graceful Signal Handling**: Intercepts `SIGTERM` to terminate processes cleanly.
-- **Unified Log Capture**: Routes all subprocess output to Docker container logs.
-
-Add `supervisor` to the dependency installation in Step 2, then configure:
-
-```dockerfile
-# Added to the Step 2 apk add command:
-#   supervisor
-
-COPY supervisord/supervisord.conf /etc/supervisord.conf
-ENTRYPOINT ["/usr/bin/supervisord", "-c", "/etc/supervisord.conf"]
-```
-
-#### Supervisord Configuration (`supervisord/supervisord.conf`)
-
-```ini
-[supervisord]
-nodaemon=true
-user=wine
-logfile=/dev/null
-logfile_maxbytes=0
-
-[program:xvfb]
-command=Xvfb :1 -screen 0 1024x768x16
-priority=1
-autorestart=true
-stdout_logfile=/dev/stdout
-stdout_logfile_maxbytes=0
-stderr_logfile=/dev/stderr
-stderr_logfile_maxbytes=0
-
-[program:x11vnc]
-command=x11vnc -display :1 -nopw -forever -shared
-priority=2
-autorestart=true
-stdout_logfile=/dev/stdout
-stdout_logfile_maxbytes=0
-stderr_logfile=/dev/stderr
-stderr_logfile_maxbytes=0
-
-[program:wine]
-command=wine notepad
-priority=3
-autorestart=true
-environment=DISPLAY=":1",WINEPREFIX="/home/wine/.wine",WINEARCH="win64"
-stdout_logfile=/dev/stdout
-stdout_logfile_maxbytes=0
-stderr_logfile=/dev/stderr
-stderr_logfile_maxbytes=0
-```
-
----
-
-### Step 5: VNC remote access
-
-To visually interact with the Wine GUI from outside the container, we attach `x11vnc` to the existing Xvfb virtual display. This mirrors the framebuffer that Wine is already rendering to, without requiring a second display server.
-
-- `x11vnc`: Lightweight VNC server that attaches to an existing X display.
-
-Add `x11vnc` to the dependency installation in Step 2 and expose the VNC port:
-
-```dockerfile
-# Added to the Step 2 apk add command:
-#   x11vnc
-
-EXPOSE 5900
-```
-
-#### Connecting to the Container
-
-Run the container with port mapping:
-
-```bash
-docker run --rm -p 5900:5900 savisor-node
-```
-
-Connect any VNC client (e.g., RealVNC, TigerVNC Viewer, Remmina) to `localhost:5900`.
-
-### Step 6: Portable MetaTrader 5
-
-Instead of installing MetaTrader 5 inside the container (which requires interactive setup, credential entry, and broker authentication), we use a **portable installation** created on a Windows machine. This pre-configured folder contains all account credentials, broker connections, Expert Advisors, and settings — ready to run without any manual provisioning.
-
-#### Creating the Portable MetaTrader 5 Instance
-
-On a **Windows 10 64-bit** machine:
-
-1. Download the MetaTrader 5 installer from the official MQL5 website.
-2. Run the installer and set the installation path to `C:\MetaTrader5`.
-3. Close MetaTrader 5 completely after installation finishes (including the system tray icon).
-4. Relaunch in portable mode from the command line:
+1. Download and run the MT5 installer. Set the installation path to `C:\MetaTrader5`.
+2. Close the terminal completely.
+3. Relaunch in portable mode from cmd/PowerShell:
    ```cmd
    C:\MetaTrader5\terminal64.exe /portable
    ```
-   The `/portable` flag tells MT5 to store all data (profiles, logs, configs) within the installation folder itself instead of `%APPDATA%`.
-5. With MT5 running in portable mode, log into your broker account, configure your charts, indicators, and Expert Advisors.
-6. Close MetaTrader 5 completely and copy the entire `C:\MetaTrader5` folder to the root of this project as `MetaTrader5/`.
+4. Log into your broker account, set up broker servers, and configure charts/indicators.
+5. Close MT5 and copy the entire `C:\MetaTrader5` folder to the root of this project as `MetaTrader5/`.
 
-The resulting project structure:
-
-```
+The project directory structure should look like this:
+```text
 savisor-node/
 ├── Dockerfile
 ├── README.md
@@ -183,71 +38,83 @@ savisor-node/
 └── MetaTrader5/
     ├── terminal64.exe
     ├── MQL5/
-    ├── Config/
-    ├── Profiles/
-    ├── logs/
     └── ...
-```
-
-#### Dockerfile Integration
-
-The portable folder is copied directly into the Wine C: drive during the build:
-
-```dockerfile
-COPY --chown=wine:wine MetaTrader5/ /home/wine/.wine/drive_c/MetaTrader5/
-```
-
-The supervisord `[program:wine]` section launches the terminal in portable mode:
-
-```ini
-[program:wine]
-command=wine C:\MetaTrader5\terminal64.exe /portable
 ```
 
 ---
 
-### Accumulative Dockerfile (Final)
+## Build and Run
 
-```dockerfile
-FROM alpine:latest
+### 1. Build the Docker Image
+```bash
+docker build -t savisor/savisor-node:latest .
+```
 
-# Install general purpose dependencies, supervisor, and VNC
-RUN apk add --no-cache --repository http://dl-cdn.alpinelinux.org/alpine/edge/community \
-    bash \
-    curl \
-    xvfb \
-    freetype \
-    fontconfig \
-    msttcorefonts-installer \
-    supervisor \
-    x11vnc \
-    && update-ms-fonts \
-    && fc-cache -f
+### 2. Run the Container
+Both the REST API and VNC require authentication secrets to start:
 
-# Install Wine from the Alpine community repository
-RUN apk add --no-cache --repository http://dl-cdn.alpinelinux.org/alpine/edge/community wine
+```bash
+docker run -d \
+  --name savisor-node \
+  -p 8000:8000 \
+  -p 5900:5900 \
+  -e SAVISOR_API_KEY="your-secret-api-key" \
+  -e VNC_PASSWORD="your-vnc-password" \
+  savisor/savisor-node:latest
+```
 
-# Set up user and environment variables for Wine
-ENV WINEPREFIX=/home/wine/.wine
-ENV WINEARCH=win64
-ENV DISPLAY=:1
-ENV WINEDLLOVERRIDES="mscoree=disabled"
+---
 
-# Create wine user and workspace
-RUN adduser -D -u 1000 wine && \
-    mkdir -p /home/wine/.wine && \
-    chown -R wine:wine /home/wine
+## Usage Guide
 
-# Copy supervisord configuration
-COPY supervisord/supervisord.conf /etc/supervisord.conf
+### 1. REST API
+FastAPI exposes the REST interface on port `8000`.
 
-# Copy portable MetaTrader 5 into the Wine C: drive
-COPY --chown=wine:wine MetaTrader5/ /home/wine/.wine/drive_c/MetaTrader5/
+- **Liveness Probe** (Unauthenticated):
+  ```bash
+  curl -i http://localhost:8000/health
+  ```
+- **Read Root** (Unauthenticated):
+  ```bash
+  curl -i http://localhost:8000/
+  ```
+- **Operational MT5 Endpoints** (Requires API Key):
+  ```bash
+  curl -i -X GET http://localhost:8000/api/v1/terminals/trade/account \
+    -H "Authorization: Bearer your-secret-api-key"
+  ```
+  See `api/curl_tests.md` for a comprehensive list of curl examples.
 
-USER wine
-WORKDIR /home/wine
+### 2. GUI VNC Access
+Connect to `localhost:5900` using any standard VNC client (TigerVNC, RealVNC, Remmina, etc.) and enter your `VNC_PASSWORD`.
+> **Note**: The RFB VNC protocol truncates passwords to 8 characters max.
 
-EXPOSE 5900
+---
 
-ENTRYPOINT ["/usr/bin/supervisord", "-c", "/etc/supervisord.conf"]
+## Local Development & Testing
+
+Python dependencies and virtual environments are managed using `uv` inside the `api` folder.
+
+1. **Format Code**:
+   ```bash
+   uv run --project api ruff format
+   ```
+2. **Lint Code**:
+   ```bash
+   uv run --project api ruff check
+   ```
+3. **Run Unit Tests**:
+   ```bash
+   uv run --project api pytest
+   ```
+
+---
+
+## Docker Hub Deployment
+
+The image is pushed to the private Docker Hub repository:
+`https://hub.docker.com/repository/docker/savisor/savisor-node`
+```bash
+docker tag savisor/savisor-node:latest savisor/savisor-node:latest
+docker push savisor/savisor-node:latest
 ```

@@ -2,7 +2,9 @@ import logging
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
+
+from auth import enforce_api_key_configured, require_api_key
 
 # Import mt5 safely using the same import logic as our router
 from routers.trading import mt5
@@ -16,6 +18,9 @@ logger = logging.getLogger("api")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager to handle MT5 initialization and shutdown."""
+    # Fail fast if the API key is not configured
+    enforce_api_key_configured()
+
     yield
 
     logger.info("Shutting down MetaTrader 5 connection...")
@@ -33,13 +38,16 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Register the trading router
-app.include_router(trading_router)
+# Register the trading router with API key auth applied to all its endpoints
+app.include_router(trading_router, dependencies=[Depends(require_api_key)])
 
 
 @app.get("/")
 def read_root() -> dict[str, Any]:
-    """Root endpoint returning basic API metadata."""
+    """Root endpoint returning basic API metadata.
+
+    Unauthenticated — exposes no sensitive data.
+    """
     logger.info("Root endpoint accessed")
     return {
         "title": app.title,
@@ -51,6 +59,9 @@ def read_root() -> dict[str, Any]:
 
 @app.get("/health")
 def health_check() -> dict[str, str]:
-    """Simple health check endpoint."""
+    """Simple health check endpoint.
+
+    Unauthenticated — used by container orchestrators for liveness probes.
+    """
     logger.info("Health check endpoint accessed")
     return {"status": "ok"}

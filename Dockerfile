@@ -82,7 +82,9 @@ RUN fc-cache -f
 # Copy supervisord configuration and helper scripts
 COPY supervisord/supervisord.conf /etc/supervisord.conf
 COPY --chown=wine:wine supervisord/dismiss_dialogs.sh /home/wine/dismiss_dialogs.sh
-RUN chmod +x /home/wine/dismiss_dialogs.sh
+COPY --chown=wine:wine supervisord/startup_guard.sh /home/wine/startup_guard.sh
+COPY --chown=wine:wine supervisord/vnc_passwd_setup.sh /home/wine/vnc_passwd_setup.sh
+RUN chmod +x /home/wine/dismiss_dialogs.sh /home/wine/startup_guard.sh /home/wine/vnc_passwd_setup.sh
 
 # Copy portable MetaTrader 5 from host
 COPY --chown=wine:wine MetaTrader5/ /home/wine/.wine/drive_c/MetaTrader5/
@@ -97,6 +99,9 @@ RUN rm -f /home/wine/.wine/drive_c/MetaTrader5/Config/terminal.lic \
 # Perform setup tasks as the wine user
 USER wine
 WORKDIR /home/wine
+
+# Create the VNC password directory (password file is written at runtime)
+RUN mkdir -p /home/wine/.vnc
 
 # Initialize Wine Prefix and apply the modern flat light theme, and register cryptographic providers
 RUN wineboot --init && \

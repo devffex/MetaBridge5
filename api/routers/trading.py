@@ -54,7 +54,6 @@ from schemas.symbols import (
 )
 from schemas.terminal import (
     AccountInfoResponse,
-    AuthenticationRequest,
     LastErrorResponse,
     TerminalInfoResponse,
     VersionResponse,
@@ -629,10 +628,18 @@ async def run_mt5_op(
     if op not in ("initialize", "terminal_info", "version", "last_error"):
         info = mt5.terminal_info()
         acct = mt5.account_info()
-        if info is None or not getattr(info, "connected", False) or acct is None or getattr(acct, "login", 0) == 0:
+        if (
+            info is None
+            or not getattr(info, "connected", False)
+            or acct is None
+            or getattr(acct, "login", 0) == 0
+        ):
             raise HTTPException(
                 status_code=412,
-                detail="Terminal not authenticated. Please log in manually to your broker account via VNC first."
+                detail=(
+                    "Terminal not authenticated. "
+                    "Please log in manually to your broker account via VNC first."
+                ),
             )
 
     op_func = getattr(mt5, op, None)
@@ -766,12 +773,9 @@ router = APIRouter(prefix="/api/v1/terminals", tags=["trading"])
 # ---------------------------------------------------------
 
 
-
-
-@router.post(
-    "/trade/order", response_model=OrderSendResult
-)
-async def send_order(payload: TradeRequest,
+@router.post("/trade/order", response_model=OrderSendResult)
+async def send_order(
+    payload: TradeRequest,
 ):
     """Send a trade order."""
     params = payload.model_dump(exclude_none=True)
@@ -788,7 +792,8 @@ async def send_order(payload: TradeRequest,
     "/trade/order/check",
     response_model=OrderCheckResult,
 )
-async def check_order(payload: TradeRequest,
+async def check_order(
+    payload: TradeRequest,
 ):
     """Check margin sufficiency for a trade order."""
     params = payload.model_dump(exclude_none=True)
@@ -805,7 +810,8 @@ async def check_order(payload: TradeRequest,
     "/trade/order/calc/profit",
     response_model=OrderCalcProfitResponse,
 )
-async def calc_order_profit(payload: OrderCalcProfitRequest,
+async def calc_order_profit(
+    payload: OrderCalcProfitRequest,
 ):
     """Estimate profit for a trading operation."""
     params = payload.model_dump()
@@ -819,7 +825,8 @@ async def calc_order_profit(payload: OrderCalcProfitRequest,
     "/trade/order/calc/margin",
     response_model=OrderCalcMarginResponse,
 )
-async def calc_order_margin(payload: OrderCalcMarginRequest,
+async def calc_order_margin(
+    payload: OrderCalcMarginRequest,
 ):
     """Estimate margin for a trading operation."""
     params = payload.model_dump()
@@ -833,7 +840,8 @@ async def calc_order_margin(payload: OrderCalcMarginRequest,
     "/trade/positions",
     response_model=PositionsResponse,
 )
-async def get_positions(symbol: str | None = Query(None, description="Filter positions by symbol"),
+async def get_positions(
+    symbol: str | None = Query(None, description="Filter positions by symbol"),
     group: str | None = Query(None, description="Filter positions by group"),
     ticket: int | None = Query(None, description="Filter positions by ticket"),
 ):
@@ -891,9 +899,7 @@ async def get_account_info():
     return AccountInfoResponse(**result)
 
 
-@router.get(
-    "/trade/version", response_model=VersionResponse
-)
+@router.get("/trade/version", response_model=VersionResponse)
 async def get_version():
     """Return the MetaTrader 5 terminal version."""
     result = await run_mt5_op("version", {})
@@ -914,7 +920,8 @@ async def get_last_error():
     "/trade/history/deals",
     response_model=HistoryDealsResponse,
 )
-async def get_history_deals(payload: HistoryDealsRequest,
+async def get_history_deals(
+    payload: HistoryDealsRequest,
 ):
     """Get deals from trading history."""
     params = {}
@@ -938,7 +945,8 @@ async def get_history_deals(payload: HistoryDealsRequest,
     "/trade/history/deals/total",
     response_model=HistoryDealsTotalResponse,
 )
-async def get_history_deals_total(payload: HistoryDealsTotalRequest,
+async def get_history_deals_total(
+    payload: HistoryDealsTotalRequest,
 ):
     """Get the number of deals from trading history."""
     params = {
@@ -955,7 +963,8 @@ async def get_history_deals_total(payload: HistoryDealsTotalRequest,
     "/trade/history/orders",
     response_model=HistoryOrdersResponse,
 )
-async def get_history_orders(payload: HistoryOrdersRequest,
+async def get_history_orders(
+    payload: HistoryOrdersRequest,
 ):
     """Get orders from trading history."""
     params = {}
@@ -979,7 +988,8 @@ async def get_history_orders(payload: HistoryOrdersRequest,
     "/trade/history/orders/total",
     response_model=HistoryOrdersTotalResponse,
 )
-async def get_history_orders_total(payload: HistoryOrdersTotalRequest,
+async def get_history_orders_total(
+    payload: HistoryOrdersTotalRequest,
 ):
     """Get the number of orders from trading history."""
     params = {
@@ -1004,10 +1014,9 @@ async def get_orders_total():
     return OrdersTotalResponse(total=result)
 
 
-@router.get(
-    "/trade/orders", response_model=OrdersGetResponse
-)
-async def get_orders(symbol: str | None = Query(None, description="Filter orders by symbol"),
+@router.get("/trade/orders", response_model=OrdersGetResponse)
+async def get_orders(
+    symbol: str | None = Query(None, description="Filter orders by symbol"),
     group: str | None = Query(None, description="Filter orders by group"),
     ticket: int | None = Query(None, description="Filter orders by ticket"),
 ):
@@ -1037,7 +1046,8 @@ async def get_orders(symbol: str | None = Query(None, description="Filter orders
     "/trade/market/ticks/range",
     response_model=CopyTicksResponse,
 )
-async def copy_ticks_range(payload: CopyTicksRangeRequest,
+async def copy_ticks_range(
+    payload: CopyTicksRangeRequest,
 ):
     """Get ticks for the specified date range."""
     params = {
@@ -1056,7 +1066,8 @@ async def copy_ticks_range(payload: CopyTicksRangeRequest,
     "/trade/market/ticks/from",
     response_model=CopyTicksResponse,
 )
-async def copy_ticks_from(payload: CopyTicksFromRequest,
+async def copy_ticks_from(
+    payload: CopyTicksFromRequest,
 ):
     """Get ticks starting from the specified date."""
     params = {
@@ -1075,7 +1086,8 @@ async def copy_ticks_from(payload: CopyTicksFromRequest,
     "/trade/market/rates/range",
     response_model=CopyRatesResponse,
 )
-async def copy_rates_range(payload: CopyRatesRangeRequest,
+async def copy_rates_range(
+    payload: CopyRatesRangeRequest,
 ):
     """Get bars in the specified date range."""
     params = {
@@ -1094,7 +1106,8 @@ async def copy_rates_range(payload: CopyRatesRangeRequest,
     "/trade/market/rates/from-pos",
     response_model=CopyRatesResponse,
 )
-async def copy_rates_from_pos(payload: CopyRatesFromPosRequest,
+async def copy_rates_from_pos(
+    payload: CopyRatesFromPosRequest,
 ):
     """Get bars from the specified index position."""
     params = {
@@ -1113,7 +1126,8 @@ async def copy_rates_from_pos(payload: CopyRatesFromPosRequest,
     "/trade/market/rates/from",
     response_model=CopyRatesResponse,
 )
-async def copy_rates_from(payload: CopyRatesFromRequest,
+async def copy_rates_from(
+    payload: CopyRatesFromRequest,
 ):
     """Get bars starting from the specified date."""
     params = {
@@ -1132,7 +1146,8 @@ async def copy_rates_from(payload: CopyRatesFromRequest,
     "/trade/market/book/add",
     response_model=MarketBookActionResponse,
 )
-async def market_book_add(payload: MarketBookRequest,
+async def market_book_add(
+    payload: MarketBookRequest,
 ):
     """Subscribes the terminal to Market Depth change events for a specified symbol."""
     params = {"symbol": payload.symbol}
@@ -1146,7 +1161,8 @@ async def market_book_add(payload: MarketBookRequest,
     "/trade/market/book/release",
     response_model=MarketBookActionResponse,
 )
-async def market_book_release(payload: MarketBookRequest,
+async def market_book_release(
+    payload: MarketBookRequest,
 ):
     """Unsubscribes the terminal from Market Depth change events
     for a specified symbol.
@@ -1162,7 +1178,8 @@ async def market_book_release(payload: MarketBookRequest,
     "/trade/market/book/get",
     response_model=MarketBookGetResponse,
 )
-async def market_book_get(symbol: str = Query(..., description="Symbol name"),
+async def market_book_get(
+    symbol: str = Query(..., description="Symbol name"),
 ):
     """Returns a tuple of BookInfo objects containing market depth information."""
     params = {"symbol": symbol}
@@ -1176,7 +1193,8 @@ async def market_book_get(symbol: str = Query(..., description="Symbol name"),
     "/trade/symbols/select",
     response_model=SymbolSelectResponse,
 )
-async def symbol_select(payload: SymbolSelectRequest,
+async def symbol_select(
+    payload: SymbolSelectRequest,
 ):
     """Select a symbol in the Market Watch window."""
     params = payload.model_dump()
@@ -1198,7 +1216,8 @@ async def get_symbols_total():
     "/trade/symbols",
     response_model=SymbolsGetResponse,
 )
-async def get_symbols(group: str | None = Query(None, description="Group name filter"),
+async def get_symbols(
+    group: str | None = Query(None, description="Group name filter"),
 ):
     """Get all financial instruments (filterable by group)."""
     params = {}
@@ -1214,7 +1233,8 @@ async def get_symbols(group: str | None = Query(None, description="Group name fi
     "/trade/symbols/info",
     response_model=SymbolInfoResponse,
 )
-async def get_symbol_info(payload: SymbolInfoRequest,
+async def get_symbol_info(
+    payload: SymbolInfoRequest,
 ):
     """Get data on a financial instrument."""
     params = payload.model_dump()
@@ -1230,7 +1250,8 @@ async def get_symbol_info(payload: SymbolInfoRequest,
     "/trade/symbols/info/tick",
     response_model=TickResponse,
 )
-async def get_symbol_info_tick(payload: SymbolInfoTickRequest,
+async def get_symbol_info_tick(
+    payload: SymbolInfoTickRequest,
 ):
     """Get the last tick for a financial instrument."""
     params = payload.model_dump()

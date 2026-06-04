@@ -8,6 +8,33 @@ The REST API endpoints are completely stateless and act as a direct proxy to the
 
 - **Host**: `http://localhost:8000`
 
+## Authentication
+
+All endpoints under `/api/v1/` require a **Bearer token** in the `Authorization` header. The token must match the `SAVISOR_API_KEY` environment variable set when starting the container.
+
+Set your API key in a shell variable for convenience:
+
+```bash
+export SAVISOR_API_KEY="your-secret-api-key-here"
+```
+
+Every curl command below includes the authorization header:
+```
+-H "Authorization: Bearer $SAVISOR_API_KEY"
+```
+
+> **Note**: The `GET /` and `GET /health` endpoints do **not** require authentication.
+
+### Unauthenticated Endpoints
+
+```bash
+# Root metadata
+curl -i -X GET http://localhost:8000/
+
+# Health check
+curl -i -X GET http://localhost:8000/health
+```
+
 ---
 
 ## 1. Lifecycle Operations
@@ -25,7 +52,8 @@ The native MetaTrader 5 `initialize()` and `shutdown()` operations are handled a
 Retrieve connected MT5 terminal settings and client status.
 
 ```bash
-curl -i -X GET http://localhost:8000/api/v1/terminals/trade/terminal/info
+curl -i -X GET http://localhost:8000/api/v1/terminals/trade/terminal/info \
+  -H "Authorization: Bearer $SAVISOR_API_KEY"
 ```
 
 ### Account Info (`account_info`)
@@ -33,7 +61,8 @@ curl -i -X GET http://localhost:8000/api/v1/terminals/trade/terminal/info
 Retrieve information on the currently authenticated trading account.
 
 ```bash
-curl -i -X GET http://localhost:8000/api/v1/terminals/trade/account
+curl -i -X GET http://localhost:8000/api/v1/terminals/trade/account \
+  -H "Authorization: Bearer $SAVISOR_API_KEY"
 ```
 
 ### Version (`version`)
@@ -41,7 +70,8 @@ curl -i -X GET http://localhost:8000/api/v1/terminals/trade/account
 Get the MT5 client build, version, and release date.
 
 ```bash
-curl -i -X GET http://localhost:8000/api/v1/terminals/trade/version
+curl -i -X GET http://localhost:8000/api/v1/terminals/trade/version \
+  -H "Authorization: Bearer $SAVISOR_API_KEY"
 ```
 
 ### Last Error (`last_error`)
@@ -49,7 +79,8 @@ curl -i -X GET http://localhost:8000/api/v1/terminals/trade/version
 Check the code and description of the last recorded terminal error.
 
 ```bash
-curl -i -X GET http://localhost:8000/api/v1/terminals/trade/last-error
+curl -i -X GET http://localhost:8000/api/v1/terminals/trade/last-error \
+  -H "Authorization: Bearer $SAVISOR_API_KEY"
 ```
 
 ---
@@ -61,7 +92,8 @@ curl -i -X GET http://localhost:8000/api/v1/terminals/trade/last-error
 Get the total number of financial instruments available on the server.
 
 ```bash
-curl -i -X GET http://localhost:8000/api/v1/terminals/trade/symbols/total
+curl -i -X GET http://localhost:8000/api/v1/terminals/trade/symbols/total \
+  -H "Authorization: Bearer $SAVISOR_API_KEY"
 ```
 
 ### Symbols Get (`symbols_get`)
@@ -69,7 +101,8 @@ curl -i -X GET http://localhost:8000/api/v1/terminals/trade/symbols/total
 Retrieve financial instruments (filterable by `group`).
 
 ```bash
-curl -i -X GET "http://localhost:8000/api/v1/terminals/trade/symbols?group=Forex"
+curl -i -X GET "http://localhost:8000/api/v1/terminals/trade/symbols?group=Forex" \
+  -H "Authorization: Bearer $SAVISOR_API_KEY"
 ```
 
 ### Symbol Select (`symbol_select`)
@@ -79,6 +112,7 @@ Add or remove a symbol from the Market Watch window.
 ```bash
 curl -i -X POST http://localhost:8000/api/v1/terminals/trade/symbols/select \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $SAVISOR_API_KEY" \
   -d '{
     "symbol": "EURUSD",
     "enable": true
@@ -92,6 +126,7 @@ Get complete detail specifications for a symbol.
 ```bash
 curl -i -X POST http://localhost:8000/api/v1/terminals/trade/symbols/info \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $SAVISOR_API_KEY" \
   -d '{
     "symbol": "EURUSD"
   }'
@@ -104,6 +139,7 @@ Fetch the last tick details (bid/ask/last prices) for a symbol.
 ```bash
 curl -i -X POST http://localhost:8000/api/v1/terminals/trade/symbols/info/tick \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $SAVISOR_API_KEY" \
   -d '{
     "symbol": "EURUSD"
   }'
@@ -120,6 +156,7 @@ Subscribe the terminal to market depth events for a specific instrument.
 ```bash
 curl -i -X POST http://localhost:8000/api/v1/terminals/trade/market/book/add \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $SAVISOR_API_KEY" \
   -d '{
     "symbol": "EURUSD"
   }'
@@ -130,7 +167,8 @@ curl -i -X POST http://localhost:8000/api/v1/terminals/trade/market/book/add \
 Get the active market depth order book levels.
 
 ```bash
-curl -i -X GET "http://localhost:8000/api/v1/terminals/trade/market/book/get?symbol=EURUSD"
+curl -i -X GET "http://localhost:8000/api/v1/terminals/trade/market/book/get?symbol=EURUSD" \
+  -H "Authorization: Bearer $SAVISOR_API_KEY"
 ```
 
 ### Market Book Release (`market_book_release`)
@@ -140,6 +178,7 @@ Unsubscribe the terminal from market depth events for a symbol.
 ```bash
 curl -i -X POST http://localhost:8000/api/v1/terminals/trade/market/book/release \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $SAVISOR_API_KEY" \
   -d '{
     "symbol": "EURUSD"
   }'
@@ -156,6 +195,7 @@ Get bars starting from a specific timestamp (timeframe enum: `1` = M1, `16385` =
 ```bash
 curl -i -X POST http://localhost:8000/api/v1/terminals/trade/market/rates/from \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $SAVISOR_API_KEY" \
   -d '{
     "symbol": "EURUSD",
     "timeframe": 16385,
@@ -171,6 +211,7 @@ Get bars from a specific index offset.
 ```bash
 curl -i -X POST http://localhost:8000/api/v1/terminals/trade/market/rates/from-pos \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $SAVISOR_API_KEY" \
   -d '{
     "symbol": "EURUSD",
     "timeframe": 1,
@@ -186,6 +227,7 @@ Get bars within an absolute date range.
 ```bash
 curl -i -X POST http://localhost:8000/api/v1/terminals/trade/market/rates/range \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $SAVISOR_API_KEY" \
   -d '{
     "symbol": "EURUSD",
     "timeframe": 16385,
@@ -201,6 +243,7 @@ Get ticks starting from a date (flags: `1` = info, `2` = trade, `-1` = all).
 ```bash
 curl -i -X POST http://localhost:8000/api/v1/terminals/trade/market/ticks/from \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $SAVISOR_API_KEY" \
   -d '{
     "symbol": "EURUSD",
     "date_from": "2026-06-01T12:00:00Z",
@@ -216,6 +259,7 @@ Get ticks in an absolute date range.
 ```bash
 curl -i -X POST http://localhost:8000/api/v1/terminals/trade/market/ticks/range \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $SAVISOR_API_KEY" \
   -d '{
     "symbol": "EURUSD",
     "date_from": "2026-06-01T00:00:00Z",
@@ -233,7 +277,8 @@ curl -i -X POST http://localhost:8000/api/v1/terminals/trade/market/ticks/range 
 Get the count of current active pending orders.
 
 ```bash
-curl -i -X GET http://localhost:8000/api/v1/terminals/trade/orders/total
+curl -i -X GET http://localhost:8000/api/v1/terminals/trade/orders/total \
+  -H "Authorization: Bearer $SAVISOR_API_KEY"
 ```
 
 ### Orders Get (`orders_get`)
@@ -241,7 +286,8 @@ curl -i -X GET http://localhost:8000/api/v1/terminals/trade/orders/total
 List current active pending orders (with optional parameters to filter).
 
 ```bash
-curl -i -X GET "http://localhost:8000/api/v1/terminals/trade/orders?symbol=EURUSD"
+curl -i -X GET "http://localhost:8000/api/v1/terminals/trade/orders?symbol=EURUSD" \
+  -H "Authorization: Bearer $SAVISOR_API_KEY"
 ```
 
 ### Order Check (`order_check`)
@@ -251,6 +297,7 @@ Verify margin and trading viability before submitting a trade order.
 ```bash
 curl -i -X POST http://localhost:8000/api/v1/terminals/trade/order/check \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $SAVISOR_API_KEY" \
   -d '{
     "action": 1,
     "symbol": "EURUSD",
@@ -268,6 +315,7 @@ Submit an active trading transaction request (e.g. buying 0.1 EURUSD).
 ```bash
 curl -i -X POST http://localhost:8000/api/v1/terminals/trade/order \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $SAVISOR_API_KEY" \
   -d '{
     "action": 1,
     "symbol": "EURUSD",
@@ -285,6 +333,7 @@ Calculate estimated profit for a potential buy/sell setup.
 ```bash
 curl -i -X POST http://localhost:8000/api/v1/terminals/trade/order/calc/profit \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $SAVISOR_API_KEY" \
   -d '{
     "action": 0,
     "symbol": "EURUSD",
@@ -301,6 +350,7 @@ Calculate the margin required for a specific type of trade.
 ```bash
 curl -i -X POST http://localhost:8000/api/v1/terminals/trade/order/calc/margin \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $SAVISOR_API_KEY" \
   -d '{
     "action": 0,
     "symbol": "EURUSD",
@@ -318,7 +368,8 @@ curl -i -X POST http://localhost:8000/api/v1/terminals/trade/order/calc/margin \
 Get the count of active market positions.
 
 ```bash
-curl -i -X GET http://localhost:8000/api/v1/terminals/trade/positions/total
+curl -i -X GET http://localhost:8000/api/v1/terminals/trade/positions/total \
+  -H "Authorization: Bearer $SAVISOR_API_KEY"
 ```
 
 ### Positions Get (`positions_get`)
@@ -326,7 +377,8 @@ curl -i -X GET http://localhost:8000/api/v1/terminals/trade/positions/total
 Retrieve active market positions (with optional query filters).
 
 ```bash
-curl -i -X GET "http://localhost:8000/api/v1/terminals/trade/positions?symbol=EURUSD"
+curl -i -X GET "http://localhost:8000/api/v1/terminals/trade/positions?symbol=EURUSD" \
+  -H "Authorization: Bearer $SAVISOR_API_KEY"
 ```
 
 ---
@@ -340,6 +392,7 @@ Retrieve the count of past orders within a specified date range.
 ```bash
 curl -i -X POST http://localhost:8000/api/v1/terminals/trade/history/orders/total \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $SAVISOR_API_KEY" \
   -d '{
     "date_from": "2026-05-01T00:00:00Z",
     "date_to": "2026-06-01T00:00:00Z"
@@ -353,6 +406,7 @@ Get the detailed list of past orders (by range, ticket, or position).
 ```bash
 curl -i -X POST http://localhost:8000/api/v1/terminals/trade/history/orders \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $SAVISOR_API_KEY" \
   -d '{
     "date_from": "2026-05-01T00:00:00Z",
     "date_to": "2026-06-01T00:00:00Z"
@@ -366,6 +420,7 @@ Retrieve the count of past execution deals in a range.
 ```bash
 curl -i -X POST http://localhost:8000/api/v1/terminals/trade/history/deals/total \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $SAVISOR_API_KEY" \
   -d '{
     "date_from": "2026-05-01T00:00:00Z",
     "date_to": "2026-06-01T00:00:00Z"
@@ -379,6 +434,7 @@ Get the detailed execution deals details (by range, ticket, or position).
 ```bash
 curl -i -X POST http://localhost:8000/api/v1/terminals/trade/history/deals \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $SAVISOR_API_KEY" \
   -d '{
     "date_from": "2026-05-01T00:00:00Z",
     "date_to": "2026-06-01T00:00:00Z"
