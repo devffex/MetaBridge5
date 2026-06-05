@@ -41,7 +41,7 @@ RUN unzip -o /tmp/wheels/pip-*.whl -d /tmp/python/Lib/site-packages/ && \
 
 
 # ==========================================
-# STAGE 4: Final Runtime Image
+# STAGE 3: Final Runtime Base Image
 # ==========================================
 FROM alpine:latest
 
@@ -80,11 +80,12 @@ COPY --from=font-builder /usr/share/fonts/truetype/msttcorefonts/ /usr/share/fon
 RUN fc-cache -f
 
 # Copy supervisord configuration and helper scripts
-COPY supervisord/supervisord.conf /etc/supervisord.conf
-COPY --chown=wine:wine supervisord/dismiss_dialogs.sh /home/wine/dismiss_dialogs.sh
-COPY --chown=wine:wine supervisord/startup_guard.sh /home/wine/startup_guard.sh
-COPY --chown=wine:wine supervisord/vnc_passwd_setup.sh /home/wine/vnc_passwd_setup.sh
-RUN chmod +x /home/wine/dismiss_dialogs.sh /home/wine/startup_guard.sh /home/wine/vnc_passwd_setup.sh
+COPY docker/supervisord.conf /etc/supervisord.conf
+COPY --chown=wine:wine docker/supervisord/dismiss_dialogs.sh /home/wine/dismiss_dialogs.sh
+COPY --chown=wine:wine docker/supervisord/startup_guard.sh /home/wine/startup_guard.sh
+COPY --chown=wine:wine docker/supervisord/vnc_passwd_setup.sh /home/wine/vnc_passwd_setup.sh
+COPY --chown=wine:wine docker/supervisord/entrypoint.sh /home/wine/entrypoint.sh
+RUN chmod +x /home/wine/dismiss_dialogs.sh /home/wine/startup_guard.sh /home/wine/vnc_passwd_setup.sh /home/wine/entrypoint.sh
 
 # Copy portable MetaTrader 5 from host
 COPY --chown=wine:wine MetaTrader5/ /home/wine/.wine/drive_c/MetaTrader5/
@@ -92,7 +93,7 @@ COPY --chown=wine:wine MetaTrader5/ /home/wine/.wine/drive_c/MetaTrader5/
 # Configure system timezone name for Wine's timezone auto-detection
 RUN echo "UTC" > /etc/timezone
 
-# Clean up any pre-baked host-specific terminal license and account cache to ensure clean broker TLS handshakes
+# Clean up any pre-baked host-specific terminal license and account cache
 RUN rm -f /home/wine/.wine/drive_c/MetaTrader5/Config/terminal.lic \
           /home/wine/.wine/drive_c/MetaTrader5/Config/accounts.dat
 
@@ -100,17 +101,11 @@ RUN rm -f /home/wine/.wine/drive_c/MetaTrader5/Config/terminal.lic \
 USER wine
 WORKDIR /home/wine
 
-# Create the VNC password directory (password file is written at runtime)
+# Create the VNC password directory
 RUN mkdir -p /home/wine/.vnc
 
-# Initialize Wine Prefix and apply the modern flat light theme, and register cryptographic providers
+# Initialize Wine Prefix, register cryptographic providers
 RUN wineboot --init && \
-    wine reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize" /v AppsUseLightTheme /t REG_DWORD /d 1 /f && \
-    wine reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize" /v SystemUsesLightTheme /t REG_DWORD /d 1 /f && \
-    wine reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\ThemeManager" /v ThemeActive /t REG_SZ /d "1" /f && \
-    wine reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\ThemeManager" /v DllName /t REG_SZ /d "C:\\windows\\resources\\themes\\light\\light.msstyles" /f && \
-    wine reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\ThemeManager" /v ColorName /t REG_SZ /d "NormalColor" /f && \
-    wine reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\ThemeManager" /v SizeName /t REG_SZ /d "NormalSize" /f && \
     wine reg add "HKLM\\Software\\Microsoft\\Cryptography\\Defaults\\Provider Types\\Type 024" /v Name /t REG_SZ /d "Microsoft Enhanced RSA and AES Cryptographic Provider" /f && \
     wine reg add "HKLM\\Software\\Microsoft\\Cryptography\\Defaults\\Provider Types\\Type 024" /v TypeName /t REG_SZ /d "RSA Full and AES" /f && \
     wine reg add "HKLM\\Software\\Microsoft\\Cryptography\\Defaults\\Provider\\Microsoft Enhanced RSA and AES Cryptographic Provider" /v "Image Path" /t REG_SZ /d "rsaenh.dll" /f && \
@@ -122,24 +117,12 @@ RUN wineboot --init && \
 COPY --chown=wine:wine --from=python-builder /tmp/python/ /home/wine/.wine/drive_c/python/
 COPY --chown=wine:wine --from=python-builder /tmp/wheels/ /home/wine/.wine/drive_c/wheels/
 
-# Install the dependencies offline in Wine Python with no-cache-dir to minimize size
+# Install the base dependencies offline in Wine Python
 RUN wine C:\\python\\python.exe -m pip install --no-cache-dir --no-index --find-links C:\\wheels \
-    fastapi uvicorn pydantic numpy pandas MetaTrader5
-
-# Clean up wheels to reduce final image size
-RUN rm -rf /home/wine/.wine/drive_c/wheels
+    numpy pandas MetaTrader5 tzdata pytz colorama
 
 # Copy and run certificate importer to register Alpine root CAs inside Wine
-COPY --chown=wine:wine import_certs.py /home/wine/.wine/drive_c/import_certs.py
+COPY --chown=wine:wine docker/import_certs.py /home/wine/.wine/drive_c/import_certs.py
 RUN wine C:\\python\\python.exe C:\\import_certs.py && rm /home/wine/.wine/drive_c/import_certs.py && wineserver -w
-
-# Copy the API codebase into /home/wine/app
-COPY --chown=wine:wine api/ /home/wine/app/api/
-
-# Copy and configure the container startup entrypoint script
-COPY --chown=wine:wine supervisord/entrypoint.sh /home/wine/entrypoint.sh
-RUN chmod +x /home/wine/entrypoint.sh
-
-EXPOSE 5900 8000
 
 ENTRYPOINT ["/home/wine/entrypoint.sh"]
