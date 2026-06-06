@@ -1,0 +1,7 @@
+[tool.mypy]
+ignore_missing_imports = true
+exclude = [
+    "terminal_pb2\\.py$",
+    "terminal_pb2_grpc\\.py$"
+]
+disable_error_code = ["assignment", "misc", "attr-defined"]

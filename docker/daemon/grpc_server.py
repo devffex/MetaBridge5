@@ -13,7 +13,7 @@ import grpc
 logging.basicConfig(
     level=logging.INFO,
     format="[gRPC Daemon] %(asctime)s - %(levelname)s - %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)]
+    handlers=[logging.StreamHandler(sys.stdout)],
 )
 logger = logging.getLogger("grpc_server")
 
@@ -25,11 +25,15 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
     import terminal_pb2
     import terminal_pb2_grpc
-except ImportError as e:
-    logger.error("Protobuf stubs not found. Run codegen first or verify paths.", exc_info=True)
+except ImportError:
+    logger.error(
+        "Protobuf stubs not found. Run codegen first or verify paths.", exc_info=True
+    )
+
     # Fallback placeholder to allow file compilation/inspection
     class MockProto:
         pass
+
     terminal_pb2 = MockProto()
     terminal_pb2_grpc = MockProto()
     terminal_pb2_grpc.TerminalServiceServicer = object
@@ -43,23 +47,31 @@ try:
     import MetaTrader5 as mt5
 except ImportError:
     logger.warning("MetaTrader5 library not found. Using MockMT5 fallback.")
+
     class MockMT5:
         def __init__(self):
             self.last_err = (0, "Success")
+
         def initialize(self, *args, **kwargs):
             return True
+
         def shutdown(self):
             pass
+
         def last_error(self):
             return self.last_err
+
         def terminal_info(self):
             class Info:
                 def __init__(self):
                     self.connected = True
                     self.build = 4320
+
                 def _asdict(self):
                     return {"connected": self.connected, "build": self.build}
+
             return Info()
+
         def account_info(self):
             class Account:
                 def __init__(self):
@@ -67,65 +79,100 @@ except ImportError:
                     self.balance = 10000.0
                     self.currency = "USD"
                     self.company = "Mock Broker"
+
                 def _asdict(self):
-                    return {"login": self.login, "balance": self.balance, "currency": self.currency, "company": self.company}
+                    return {
+                        "login": self.login,
+                        "balance": self.balance,
+                        "currency": self.currency,
+                        "company": self.company,
+                    }
+
             return Account()
+
         def positions_get(self, *args, **kwargs):
             return []
+
         def positions_total(self):
             return 0
+
         def orders_total(self):
             return 0
+
         def version(self):
             return (500, 4320, "2024-05-15")
+
         def order_send(self, request):
             return {"retcode": 10009, "comment": "Request executed", "order": 987654}
+
         def order_check(self, request):
             return {"retcode": 0, "comment": "Done"}
+
         def history_deals_get(self, *args, **kwargs):
             return []
+
         def history_deals_total(self, *args, **kwargs):
             return 0
+
         def history_orders_get(self, *args, **kwargs):
             return []
+
         def history_orders_total(self, *args, **kwargs):
             return 0
+
         def copy_ticks_from(self, *args, **kwargs):
             return []
+
         def copy_ticks_range(self, *args, **kwargs):
             return []
+
         def copy_rates_from(self, *args, **kwargs):
             return []
+
         def copy_rates_range(self, *args, **kwargs):
             return []
+
         def copy_rates_from_pos(self, *args, **kwargs):
             return []
+
         def market_book_add(self, *args, **kwargs):
             return True
+
         def market_book_release(self, *args, **kwargs):
             return True
+
         def market_book_get(self, *args, **kwargs):
             return []
+
         def symbol_select(self, *args, **kwargs):
             return True
+
         def symbols_total(self):
             return 0
+
         def symbols_get(self, *args, **kwargs):
             return []
+
         def symbol_info(self, *args, **kwargs):
             return None
+
         def symbol_info_tick(self, *args, **kwargs):
             return None
+
         def login(self, *args, **kwargs):
             return True
+
         def order_calc_margin(self, *args, **kwargs):
             return 0.0
+
         def order_calc_profit(self, *args, **kwargs):
             return 0.0
+
     mt5 = MockMT5()
 
 # Reentrant lock to serialize all operations that talk to the MT5 Windows API
 mt5_lock = threading.Lock()
+
 
 # Helper to serialize MT5 namedtuples to JSON-compatible dicts
 def _serialize_mt5(obj):
@@ -137,6 +184,7 @@ def _serialize_mt5(obj):
     elif isinstance(obj, dict):
         return {k: _serialize_mt5(v) for k, v in obj.items()}
     return obj
+
 
 def parse_iso_datetime(val: str | None) -> int | None:
     if not val:
@@ -152,8 +200,8 @@ def parse_iso_datetime(val: str | None) -> int | None:
         logger.error(f"Failed to parse datetime value '{val}': {e}")
         return None
 
+
 class TerminalServiceServicer(terminal_pb2_grpc.TerminalServiceServicer):
-    
     def _ensure_initialized_and_auth(self, context, bypass_auth=False):
         # On-demand initialization
         info = mt5.terminal_info()
@@ -161,7 +209,9 @@ class TerminalServiceServicer(terminal_pb2_grpc.TerminalServiceServicer):
             logger.info("Initializing MT5 terminal on-demand...")
             if not mt5.initialize():
                 err = mt5.last_error()
-                context.abort(grpc.StatusCode.INTERNAL, f"MT5 initialization failed: {err}")
+                context.abort(
+                    grpc.StatusCode.INTERNAL, f"MT5 initialization failed: {err}"
+                )
 
         # Verification: terminals must be authenticated for data/trade endpoints
         if not bypass_auth:
@@ -173,8 +223,10 @@ class TerminalServiceServicer(terminal_pb2_grpc.TerminalServiceServicer):
                 or acct is None
                 or getattr(acct, "login", 0) == 0
             ):
-                context.abort(grpc.StatusCode.FAILED_PRECONDITION, 
-                              "Terminal not authenticated. Please log in manually to your broker account via VNC first.")
+                context.abort(
+                    grpc.StatusCode.FAILED_PRECONDITION,
+                    "Terminal not authenticated. Please log in manually to your broker account via VNC first.",
+                )
 
     def GetHealth(self, request, context):
         return terminal_pb2.HealthResponse(status="ok", service="savisor-node-daemon")
@@ -184,10 +236,12 @@ class TerminalServiceServicer(terminal_pb2_grpc.TerminalServiceServicer):
             self._ensure_initialized_and_auth(context, bypass_auth=True)
             info = mt5.terminal_info()
             if info is None:
-                context.abort(grpc.StatusCode.INTERNAL, "Failed to retrieve terminal info")
+                context.abort(
+                    grpc.StatusCode.INTERNAL, "Failed to retrieve terminal info"
+                )
             return terminal_pb2.TerminalInfoResponse(
                 connected=getattr(info, "connected", False),
-                build=getattr(info, "build", 0)
+                build=getattr(info, "build", 0),
             )
 
     def GetAccountInfo(self, request, context):
@@ -195,12 +249,14 @@ class TerminalServiceServicer(terminal_pb2_grpc.TerminalServiceServicer):
             self._ensure_initialized_and_auth(context, bypass_auth=False)
             acct = mt5.account_info()
             if acct is None:
-                context.abort(grpc.StatusCode.INTERNAL, "Failed to retrieve account info")
+                context.abort(
+                    grpc.StatusCode.INTERNAL, "Failed to retrieve account info"
+                )
             return terminal_pb2.AccountInfoResponse(
                 login=getattr(acct, "login", 0),
                 balance=getattr(acct, "balance", 0.0),
                 currency=getattr(acct, "currency", ""),
-                company=getattr(acct, "company", "")
+                company=getattr(acct, "company", ""),
             )
 
     def GetVersion(self, request, context):
@@ -210,9 +266,7 @@ class TerminalServiceServicer(terminal_pb2_grpc.TerminalServiceServicer):
             if ver is None or len(ver) < 3:
                 context.abort(grpc.StatusCode.INTERNAL, "Failed to retrieve version")
             return terminal_pb2.VersionResponse(
-                version=ver[0],
-                build=ver[1],
-                release_date=ver[2]
+                version=ver[0], build=ver[1], release_date=ver[2]
             )
 
     def GetLastError(self, request, context):
@@ -229,7 +283,9 @@ class TerminalServiceServicer(terminal_pb2_grpc.TerminalServiceServicer):
             if request.ticket:
                 kwargs["ticket"] = request.ticket
             res = mt5.positions_get(**kwargs)
-            return terminal_pb2.PositionsResponse(positions_json=json.dumps(_serialize_mt5(res)))
+            return terminal_pb2.PositionsResponse(
+                positions_json=json.dumps(_serialize_mt5(res))
+            )
 
     def GetPositionsTotal(self, request, context):
         with mt5_lock:
@@ -246,7 +302,9 @@ class TerminalServiceServicer(terminal_pb2_grpc.TerminalServiceServicer):
             if request.ticket:
                 kwargs["ticket"] = request.ticket
             res = mt5.orders_get(**kwargs)
-            return terminal_pb2.OrdersResponse(orders_json=json.dumps(_serialize_mt5(res)))
+            return terminal_pb2.OrdersResponse(
+                orders_json=json.dumps(_serialize_mt5(res))
+            )
 
     def GetOrdersTotal(self, request, context):
         with mt5_lock:
@@ -260,8 +318,10 @@ class TerminalServiceServicer(terminal_pb2_grpc.TerminalServiceServicer):
             try:
                 req_dict = json.loads(request.order_json)
             except Exception as e:
-                context.abort(grpc.StatusCode.INVALID_ARGUMENT, f"Invalid JSON order schema: {e}")
-            
+                context.abort(
+                    grpc.StatusCode.INVALID_ARGUMENT, f"Invalid JSON order schema: {e}"
+                )
+
             # Date conversions
             for k in ["expiration"]:
                 if k in req_dict and isinstance(req_dict[k], str):
@@ -271,8 +331,10 @@ class TerminalServiceServicer(terminal_pb2_grpc.TerminalServiceServicer):
 
             res = mt5.order_send(req_dict)
             if res is None:
-                context.abort(grpc.StatusCode.INTERNAL, "Order execution failed (None returned)")
-            
+                context.abort(
+                    grpc.StatusCode.INTERNAL, "Order execution failed (None returned)"
+                )
+
             res_serialized = _serialize_mt5(res)
             retcode = getattr(res, "retcode", 999)
             comment = getattr(res, "comment", "Unknown error")
@@ -281,7 +343,7 @@ class TerminalServiceServicer(terminal_pb2_grpc.TerminalServiceServicer):
                 retcode=retcode,
                 comment=comment,
                 order=order,
-                result_json=json.dumps(res_serialized)
+                result_json=json.dumps(res_serialized),
             )
 
     def CheckOrder(self, request, context):
@@ -290,15 +352,19 @@ class TerminalServiceServicer(terminal_pb2_grpc.TerminalServiceServicer):
             try:
                 req_dict = json.loads(request.order_json)
             except Exception as e:
-                context.abort(grpc.StatusCode.INVALID_ARGUMENT, f"Invalid JSON order schema: {e}")
+                context.abort(
+                    grpc.StatusCode.INVALID_ARGUMENT, f"Invalid JSON order schema: {e}"
+                )
             res = mt5.order_check(req_dict)
             if res is None:
-                context.abort(grpc.StatusCode.INTERNAL, "Order check failed (None returned)")
+                context.abort(
+                    grpc.StatusCode.INTERNAL, "Order check failed (None returned)"
+                )
             res_serialized = _serialize_mt5(res)
             return terminal_pb2.OrderCheckResponse(
                 retcode=getattr(res, "retcode", 999),
                 comment=getattr(res, "comment", "Unknown"),
-                result_json=json.dumps(res_serialized)
+                result_json=json.dumps(res_serialized),
             )
 
     def CalcProfit(self, request, context):
@@ -309,7 +375,7 @@ class TerminalServiceServicer(terminal_pb2_grpc.TerminalServiceServicer):
                 request.symbol,
                 request.volume,
                 request.price_open,
-                request.price_close
+                request.price_close,
             )
             if val is None:
                 context.abort(grpc.StatusCode.INTERNAL, "Profit calculation failed")
@@ -319,10 +385,7 @@ class TerminalServiceServicer(terminal_pb2_grpc.TerminalServiceServicer):
         with mt5_lock:
             self._ensure_initialized_and_auth(context, bypass_auth=False)
             val = mt5.order_calc_margin(
-                request.action,
-                request.symbol,
-                request.volume,
-                request.price
+                request.action, request.symbol, request.volume, request.price
             )
             if val is None:
                 context.abort(grpc.StatusCode.INTERNAL, "Margin calculation failed")
@@ -344,7 +407,7 @@ class TerminalServiceServicer(terminal_pb2_grpc.TerminalServiceServicer):
             self._ensure_initialized_and_auth(context, bypass_auth=False)
             dt_from = parse_iso_datetime(request.date_from)
             dt_to = parse_iso_datetime(request.date_to)
-            
+
             kwargs = {}
             if request.ticket:
                 kwargs["ticket"] = request.ticket
@@ -352,15 +415,23 @@ class TerminalServiceServicer(terminal_pb2_grpc.TerminalServiceServicer):
                 try:
                     kwargs["position"] = int(request.position)
                 except ValueError:
-                    context.abort(grpc.StatusCode.INVALID_ARGUMENT, "position parameter must be numeric ticket ID")
+                    context.abort(
+                        grpc.StatusCode.INVALID_ARGUMENT,
+                        "position parameter must be numeric ticket ID",
+                    )
             else:
                 if dt_from is None or dt_to is None:
-                    context.abort(grpc.StatusCode.INVALID_ARGUMENT, "date_from and date_to are required when querying history deals")
+                    context.abort(
+                        grpc.StatusCode.INVALID_ARGUMENT,
+                        "date_from and date_to are required when querying history deals",
+                    )
                 kwargs["date_from"] = dt_from
                 kwargs["date_to"] = dt_to
-                
+
             res = mt5.history_deals_get(**kwargs)
-            return terminal_pb2.HistoryDealsResponse(deals_json=json.dumps(_serialize_mt5(res)))
+            return terminal_pb2.HistoryDealsResponse(
+                deals_json=json.dumps(_serialize_mt5(res))
+            )
 
     def GetHistoryDealsTotal(self, request, context):
         with mt5_lock:
@@ -368,7 +439,10 @@ class TerminalServiceServicer(terminal_pb2_grpc.TerminalServiceServicer):
             dt_from = parse_iso_datetime(request.date_from)
             dt_to = parse_iso_datetime(request.date_to)
             if dt_from is None or dt_to is None:
-                context.abort(grpc.StatusCode.INVALID_ARGUMENT, "date_from and date_to parameters are required")
+                context.abort(
+                    grpc.StatusCode.INVALID_ARGUMENT,
+                    "date_from and date_to parameters are required",
+                )
             total = mt5.history_deals_total(dt_from, dt_to)
             return terminal_pb2.TotalResponse(total=total)
 
@@ -377,7 +451,7 @@ class TerminalServiceServicer(terminal_pb2_grpc.TerminalServiceServicer):
             self._ensure_initialized_and_auth(context, bypass_auth=False)
             dt_from = parse_iso_datetime(request.date_from)
             dt_to = parse_iso_datetime(request.date_to)
-            
+
             kwargs = {}
             if request.ticket:
                 kwargs["ticket"] = request.ticket
@@ -385,15 +459,23 @@ class TerminalServiceServicer(terminal_pb2_grpc.TerminalServiceServicer):
                 try:
                     kwargs["position"] = int(request.position)
                 except ValueError:
-                    context.abort(grpc.StatusCode.INVALID_ARGUMENT, "position parameter must be numeric ticket ID")
+                    context.abort(
+                        grpc.StatusCode.INVALID_ARGUMENT,
+                        "position parameter must be numeric ticket ID",
+                    )
             else:
                 if dt_from is None or dt_to is None:
-                    context.abort(grpc.StatusCode.INVALID_ARGUMENT, "date_from and date_to are required when querying history orders")
+                    context.abort(
+                        grpc.StatusCode.INVALID_ARGUMENT,
+                        "date_from and date_to are required when querying history orders",
+                    )
                 kwargs["date_from"] = dt_from
                 kwargs["date_to"] = dt_to
 
             res = mt5.history_orders_get(**kwargs)
-            return terminal_pb2.HistoryOrdersResponse(orders_json=json.dumps(_serialize_mt5(res)))
+            return terminal_pb2.HistoryOrdersResponse(
+                orders_json=json.dumps(_serialize_mt5(res))
+            )
 
     def GetHistoryOrdersTotal(self, request, context):
         with mt5_lock:
@@ -401,7 +483,10 @@ class TerminalServiceServicer(terminal_pb2_grpc.TerminalServiceServicer):
             dt_from = parse_iso_datetime(request.date_from)
             dt_to = parse_iso_datetime(request.date_to)
             if dt_from is None or dt_to is None:
-                context.abort(grpc.StatusCode.INVALID_ARGUMENT, "date_from and date_to parameters are required")
+                context.abort(
+                    grpc.StatusCode.INVALID_ARGUMENT,
+                    "date_from and date_to parameters are required",
+                )
             total = mt5.history_orders_total(dt_from, dt_to)
             return terminal_pb2.TotalResponse(total=total)
 
@@ -411,18 +496,29 @@ class TerminalServiceServicer(terminal_pb2_grpc.TerminalServiceServicer):
             dt_from = parse_iso_datetime(request.date_from)
             dt_to = parse_iso_datetime(request.date_to)
             if dt_from is None or dt_to is None:
-                context.abort(grpc.StatusCode.INVALID_ARGUMENT, "date_from and date_to parameters are required")
+                context.abort(
+                    grpc.StatusCode.INVALID_ARGUMENT,
+                    "date_from and date_to parameters are required",
+                )
             res = mt5.copy_ticks_range(request.symbol, dt_from, dt_to, request.flags)
-            return terminal_pb2.TicksResponse(ticks_json=json.dumps(_serialize_mt5(res)))
+            return terminal_pb2.TicksResponse(
+                ticks_json=json.dumps(_serialize_mt5(res))
+            )
 
     def GetTicksFrom(self, request, context):
         with mt5_lock:
             self._ensure_initialized_and_auth(context, bypass_auth=False)
             dt_from = parse_iso_datetime(request.date_from)
             if dt_from is None:
-                context.abort(grpc.StatusCode.INVALID_ARGUMENT, "date_from parameter is required")
-            res = mt5.copy_ticks_from(request.symbol, dt_from, request.count, request.flags)
-            return terminal_pb2.TicksResponse(ticks_json=json.dumps(_serialize_mt5(res)))
+                context.abort(
+                    grpc.StatusCode.INVALID_ARGUMENT, "date_from parameter is required"
+                )
+            res = mt5.copy_ticks_from(
+                request.symbol, dt_from, request.count, request.flags
+            )
+            return terminal_pb2.TicksResponse(
+                ticks_json=json.dumps(_serialize_mt5(res))
+            )
 
     def GetRatesRange(self, request, context):
         with mt5_lock:
@@ -430,24 +526,41 @@ class TerminalServiceServicer(terminal_pb2_grpc.TerminalServiceServicer):
             dt_from = parse_iso_datetime(request.date_from)
             dt_to = parse_iso_datetime(request.date_to)
             if dt_from is None or dt_to is None:
-                context.abort(grpc.StatusCode.INVALID_ARGUMENT, "date_from and date_to parameters are required")
-            res = mt5.copy_rates_range(request.symbol, request.timeframe, dt_from, dt_to)
-            return terminal_pb2.RatesResponse(rates_json=json.dumps(_serialize_mt5(res)))
+                context.abort(
+                    grpc.StatusCode.INVALID_ARGUMENT,
+                    "date_from and date_to parameters are required",
+                )
+            res = mt5.copy_rates_range(
+                request.symbol, request.timeframe, dt_from, dt_to
+            )
+            return terminal_pb2.RatesResponse(
+                rates_json=json.dumps(_serialize_mt5(res))
+            )
 
     def GetRatesFromPos(self, request, context):
         with mt5_lock:
             self._ensure_initialized_and_auth(context, bypass_auth=False)
-            res = mt5.copy_rates_from_pos(request.symbol, request.timeframe, request.start_pos, request.count)
-            return terminal_pb2.RatesResponse(rates_json=json.dumps(_serialize_mt5(res)))
+            res = mt5.copy_rates_from_pos(
+                request.symbol, request.timeframe, request.start_pos, request.count
+            )
+            return terminal_pb2.RatesResponse(
+                rates_json=json.dumps(_serialize_mt5(res))
+            )
 
     def GetRatesFrom(self, request, context):
         with mt5_lock:
             self._ensure_initialized_and_auth(context, bypass_auth=False)
             dt_from = parse_iso_datetime(request.date_from)
             if dt_from is None:
-                context.abort(grpc.StatusCode.INVALID_ARGUMENT, "date_from parameter is required")
-            res = mt5.copy_rates_from(request.symbol, request.timeframe, dt_from, request.count)
-            return terminal_pb2.RatesResponse(rates_json=json.dumps(_serialize_mt5(res)))
+                context.abort(
+                    grpc.StatusCode.INVALID_ARGUMENT, "date_from parameter is required"
+                )
+            res = mt5.copy_rates_from(
+                request.symbol, request.timeframe, dt_from, request.count
+            )
+            return terminal_pb2.RatesResponse(
+                rates_json=json.dumps(_serialize_mt5(res))
+            )
 
     def AddMarketBook(self, request, context):
         with mt5_lock:
@@ -465,7 +578,9 @@ class TerminalServiceServicer(terminal_pb2_grpc.TerminalServiceServicer):
         with mt5_lock:
             self._ensure_initialized_and_auth(context, bypass_auth=False)
             res = mt5.market_book_get(request.symbol)
-            return terminal_pb2.MarketBookResponse(items_json=json.dumps(_serialize_mt5(res)))
+            return terminal_pb2.MarketBookResponse(
+                items_json=json.dumps(_serialize_mt5(res))
+            )
 
     def SelectSymbol(self, request, context):
         with mt5_lock:
@@ -486,28 +601,36 @@ class TerminalServiceServicer(terminal_pb2_grpc.TerminalServiceServicer):
             if request.group:
                 kwargs["group"] = request.group
             res = mt5.symbols_get(**kwargs)
-            return terminal_pb2.SymbolsResponse(symbols_json=json.dumps(_serialize_mt5(res)))
+            return terminal_pb2.SymbolsResponse(
+                symbols_json=json.dumps(_serialize_mt5(res))
+            )
 
     def GetSymbolInfo(self, request, context):
         with mt5_lock:
             self._ensure_initialized_and_auth(context, bypass_auth=False)
             res = mt5.symbol_info(request.symbol)
-            return terminal_pb2.SymbolInfoResponse(info_json=json.dumps(_serialize_mt5(res)))
+            return terminal_pb2.SymbolInfoResponse(
+                info_json=json.dumps(_serialize_mt5(res))
+            )
 
     def GetSymbolInfoTick(self, request, context):
         with mt5_lock:
             self._ensure_initialized_and_auth(context, bypass_auth=False)
             res = mt5.symbol_info_tick(request.symbol)
-            return terminal_pb2.TickInfoResponse(tick_json=json.dumps(_serialize_mt5(res)))
+            return terminal_pb2.TickInfoResponse(
+                tick_json=json.dumps(_serialize_mt5(res))
+            )
 
 
 def serve(port: int = 50051):
     server = grpc.server(concurrent.futures.ThreadPoolExecutor(max_workers=10))
-    terminal_pb2_grpc.add_TerminalServiceServicer_to_server(TerminalServiceServicer(), server)
+    terminal_pb2_grpc.add_TerminalServiceServicer_to_server(
+        TerminalServiceServicer(), server
+    )
     server.add_insecure_port(f"[::]:{port}")
     logger.info(f"Starting gRPC server on port {port}...")
     server.start()
-    
+
     # Graceful shutdown handler
     try:
         while True:
@@ -519,6 +642,7 @@ def serve(port: int = 50051):
         with mt5_lock:
             mt5.shutdown()
         logger.info("Server stopped.")
+
 
 if __name__ == "__main__":
     port_arg = int(sys.argv[1]) if len(sys.argv) > 1 else 50051
