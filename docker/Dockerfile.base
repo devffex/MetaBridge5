@@ -31,7 +31,7 @@ RUN mkdir -p /tmp/wheels && \
     --python-version 3.11 \
     --implementation cp \
     --abi cp311 \
-    numpy pandas MetaTrader5 pip setuptools wheel tzdata pytz colorama
+    grpcio grpcio-tools protobuf numpy pandas MetaTrader5 pip setuptools wheel tzdata pytz colorama
 
 # 4. Bootstrap pip, setuptools, and wheel offline by unzipping their wheels into site-packages
 RUN unzip -o /tmp/wheels/pip-*.whl -d /tmp/python/Lib/site-packages/ && \
@@ -86,7 +86,7 @@ COPY --chown=wine:wine docker/supervisord/dismiss_dialogs.sh /home/wine/dismiss_
 COPY --chown=wine:wine docker/supervisord/startup_guard.sh /home/wine/startup_guard.sh
 COPY --chown=wine:wine docker/supervisord/vnc_passwd_setup.sh /home/wine/vnc_passwd_setup.sh
 COPY --chown=wine:wine docker/supervisord/entrypoint.sh /home/wine/entrypoint.sh
-COPY --chown=wine:wine docker/supervisord/ipc_daemon.py /home/wine/.wine/drive_c/ipc_daemon.py
+COPY --chown=wine:wine docker/daemon/ /home/wine/.wine/drive_c/daemon/
 RUN chmod +x /home/wine/dismiss_dialogs.sh /home/wine/startup_guard.sh /home/wine/vnc_passwd_setup.sh /home/wine/entrypoint.sh
 
 # Copy portable MetaTrader 5 from host and strip unused binaries to save space
@@ -125,13 +125,16 @@ COPY --chown=wine:wine --from=python-builder /tmp/wheels/ /home/wine/.wine/drive
 
 # Install the base dependencies offline in Wine Python and clean up the wheels folder
 RUN wine C:\\python\\python.exe -m pip install --no-cache-dir --no-index --find-links C:\\wheels \
-    numpy pandas MetaTrader5 tzdata pytz colorama && \
+    grpcio grpcio-tools protobuf numpy pandas MetaTrader5 tzdata pytz colorama && \
     rm -rf /home/wine/.wine/drive_c/wheels
 
 # Copy and run certificate importer to register Alpine root CAs inside Wine
 COPY --chown=wine:wine docker/import_certs.py /home/wine/.wine/drive_c/import_certs.py
 RUN wine C:\\python\\python.exe C:\\import_certs.py && rm /home/wine/.wine/drive_c/import_certs.py && wineserver -w
 
-EXPOSE 5900 8000
+# Generate gRPC Python stubs from terminal.proto inside Wine
+RUN wine C:\\python\\python.exe C:\\daemon\\codegen.py && wineserver -w
+
+EXPOSE 5900 50051
 
 ENTRYPOINT ["/home/wine/entrypoint.sh"]
