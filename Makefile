@@ -7,21 +7,18 @@
 # 1. Build the shared Wine + MT5 + Python base image
 build-base:
 	docker build -f docker/Dockerfile.base -t savisor-base:latest .
+	docker tag savisor-base:latest savisor-gateway:latest
 
-# 2. Build the standalone API Gateway container
-build-gateway:
-	docker build -f apps/gateway/Dockerfile -t savisor-gateway:latest .
-
-# 3. Build the standalone Historical Data Ingest Pipeline container
+# 2. Build the standalone Historical Data Ingest Pipeline container
 build-pipeline:
 	docker build -f apps/data-pipeline/Dockerfile -t savisor-pipeline:latest .
 
-# 4. Build the standalone Algorithmic Trading Bot container
+# 3. Build the standalone Algorithmic Trading Bot container
 build-bot:
 	docker build -f apps/trading-bot/Dockerfile -t savisor-bot:latest .
 
-# 5. Build all targets sequentially
-build-all: build-base build-gateway build-pipeline build-bot
+# 4. Build all targets sequentially
+build-all: build-base build-pipeline build-bot
 
 # ==============================================================================
 # Standalone Container Running Targets (Local Testing)

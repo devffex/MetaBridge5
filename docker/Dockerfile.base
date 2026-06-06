@@ -31,7 +31,7 @@ RUN mkdir -p /tmp/wheels && \
     --python-version 3.11 \
     --implementation cp \
     --abi cp311 \
-    fastapi uvicorn pydantic numpy pandas MetaTrader5 pip setuptools wheel tzdata pytz colorama
+    numpy pandas MetaTrader5 pip setuptools wheel tzdata pytz colorama
 
 # 4. Bootstrap pip, setuptools, and wheel offline by unzipping their wheels into site-packages
 RUN unzip -o /tmp/wheels/pip-*.whl -d /tmp/python/Lib/site-packages/ && \
@@ -60,7 +60,8 @@ RUN apk add --no-cache --repository http://dl-cdn.alpinelinux.org/alpine/edge/co
     ca-certificates \
     tzdata \
     xdotool \
-    libfaketime
+    libfaketime && \
+    rm -rf /usr/lib/wine/i386-windows
 
 # Set up user and environment variables for Wine
 ENV WINEPREFIX=/home/wine/.wine
@@ -85,10 +86,15 @@ COPY --chown=wine:wine docker/supervisord/dismiss_dialogs.sh /home/wine/dismiss_
 COPY --chown=wine:wine docker/supervisord/startup_guard.sh /home/wine/startup_guard.sh
 COPY --chown=wine:wine docker/supervisord/vnc_passwd_setup.sh /home/wine/vnc_passwd_setup.sh
 COPY --chown=wine:wine docker/supervisord/entrypoint.sh /home/wine/entrypoint.sh
+COPY --chown=wine:wine docker/supervisord/ipc_daemon.py /home/wine/.wine/drive_c/ipc_daemon.py
 RUN chmod +x /home/wine/dismiss_dialogs.sh /home/wine/startup_guard.sh /home/wine/vnc_passwd_setup.sh /home/wine/entrypoint.sh
 
-# Copy portable MetaTrader 5 from host
+# Copy portable MetaTrader 5 from host and strip unused binaries to save space
 COPY --chown=wine:wine MetaTrader5/ /home/wine/.wine/drive_c/MetaTrader5/
+RUN rm -f /home/wine/.wine/drive_c/MetaTrader5/MetaEditor64.exe \
+           /home/wine/.wine/drive_c/MetaTrader5/metatester64.exe \
+           /home/wine/.wine/drive_c/MetaTrader5/uninstall.exe && \
+    rm -rf /home/wine/.wine/drive_c/MetaTrader5/Sounds
 
 # Configure system timezone name for Wine's timezone auto-detection
 RUN echo "UTC" > /etc/timezone
@@ -117,12 +123,15 @@ RUN wineboot --init && \
 COPY --chown=wine:wine --from=python-builder /tmp/python/ /home/wine/.wine/drive_c/python/
 COPY --chown=wine:wine --from=python-builder /tmp/wheels/ /home/wine/.wine/drive_c/wheels/
 
-# Install the base dependencies offline in Wine Python
+# Install the base dependencies offline in Wine Python and clean up the wheels folder
 RUN wine C:\\python\\python.exe -m pip install --no-cache-dir --no-index --find-links C:\\wheels \
-    numpy pandas MetaTrader5 tzdata pytz colorama
+    numpy pandas MetaTrader5 tzdata pytz colorama && \
+    rm -rf /home/wine/.wine/drive_c/wheels
 
 # Copy and run certificate importer to register Alpine root CAs inside Wine
 COPY --chown=wine:wine docker/import_certs.py /home/wine/.wine/drive_c/import_certs.py
 RUN wine C:\\python\\python.exe C:\\import_certs.py && rm /home/wine/.wine/drive_c/import_certs.py && wineserver -w
+
+EXPOSE 5900 8000
 
 ENTRYPOINT ["/home/wine/entrypoint.sh"]
