@@ -8,6 +8,9 @@ import time
 from datetime import datetime
 
 import grpc
+import subprocess
+from pathlib import Path
+import psutil
 
 # Setup basic logging to stdout
 logging.basicConfig(
@@ -199,6 +202,41 @@ def parse_iso_datetime(val: str | None) -> int | None:
     except Exception as e:
         logger.error(f"Failed to parse datetime value '{val}': {e}")
         return None
+
+
+def _find_terminal_process():
+    for proc in psutil.process_iter(['pid', 'name']):
+        try:
+            if proc.info['name'] and 'terminal64.exe' in proc.info['name'].lower():
+                return proc
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+    return None
+
+
+class APIKeyAuthInterceptor(grpc.ServerInterceptor):
+    def __init__(self, api_key: str):
+        self.api_key = api_key
+
+    def intercept_service(self, continuation, handler_call_details):
+        method = handler_call_details.method
+        if "GetHealth" in method:
+            return continuation(handler_call_details)
+
+        metadata = dict(handler_call_details.invocation_metadata)
+        client_key = metadata.get("x-api-key") or metadata.get("x-api-key-bin")
+        if isinstance(client_key, bytes):
+            client_key = client_key.decode("utf-8", errors="ignore")
+
+        if not client_key or client_key != self.api_key:
+            return self._abort_unauthenticated()
+
+        return continuation(handler_call_details)
+
+    def _abort_unauthenticated(self):
+        def abort(request, context):
+            context.abort(grpc.StatusCode.UNAUTHENTICATED, "Invalid or missing X-API-Key metadata header")
+        return grpc.unary_unary_rpc_method_handler(abort)
 
 
 class TerminalServiceServicer(terminal_pb2_grpc.TerminalServiceServicer):
@@ -621,9 +659,159 @@ class TerminalServiceServicer(terminal_pb2_grpc.TerminalServiceServicer):
                 tick_json=json.dumps(_serialize_mt5(res))
             )
 
+    def StartTerminal(self, request, context):
+        try:
+            res = subprocess.run(["supervisorctl", "start", "wine"], capture_output=True, text=True)
+            if res.returncode == 0 and "started" in res.stdout.lower():
+                return terminal_pb2.BoolResponse(success=True)
+        except Exception as e:
+            logger.warning(f"Failed to start terminal via supervisorctl: {e}")
+        
+        proc = _find_terminal_process()
+        if proc is not None:
+            return terminal_pb2.BoolResponse(success=True)
+        
+        try:
+            cmd = ["C:\\MetaTrader5\\terminal64.exe", "/portable"]
+            env = os.environ.copy()
+            subprocess.Popen(cmd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return terminal_pb2.BoolResponse(success=True)
+        except Exception as e:
+            logger.error(f"Failed to start terminal manually: {e}")
+            context.abort(grpc.StatusCode.INTERNAL, f"Failed to start terminal: {e}")
+
+    def StopTerminal(self, request, context):
+        try:
+            res = subprocess.run(["supervisorctl", "stop", "wine"], capture_output=True, text=True)
+            if res.returncode == 0 and "stopped" in res.stdout.lower():
+                return terminal_pb2.BoolResponse(success=True)
+        except Exception as e:
+            logger.warning(f"Failed to stop terminal via supervisorctl: {e}")
+            
+        proc = _find_terminal_process()
+        if proc is None:
+            return terminal_pb2.BoolResponse(success=True)
+        
+        try:
+            parent = psutil.Process(proc.pid)
+            for child in parent.children(recursive=True):
+                child.kill()
+            parent.kill()
+            return terminal_pb2.BoolResponse(success=True)
+        except Exception as e:
+            logger.error(f"Failed to stop terminal manually: {e}")
+            context.abort(grpc.StatusCode.INTERNAL, f"Failed to stop terminal: {e}")
+
+    def GetTerminalStatus(self, request, context):
+        proc = _find_terminal_process()
+        if proc is not None:
+            try:
+                cpu = proc.cpu_percent(interval=0.1)
+                mem = proc.memory_info().rss / (1024 * 1024)
+                return terminal_pb2.TerminalStatusResponse(
+                    status="running",
+                    pid=proc.pid,
+                    cpu_percent=cpu,
+                    memory_rss_mb=mem
+                )
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+        return terminal_pb2.TerminalStatusResponse(
+            status="stopped",
+            pid=0,
+            cpu_percent=0.0,
+            memory_rss_mb=0.0
+        )
+
+    def GetTerminalLogs(self, request, context):
+        logs_dir = Path("/home/wine/.wine/drive_c/MetaTrader5/logs")
+        if not logs_dir.exists():
+            context.abort(grpc.StatusCode.NOT_FOUND, "Logs directory not found")
+            
+        log_files = sorted(logs_dir.glob("*.log"), reverse=True)
+        terminal_logs = [f for f in log_files if f.name != "metaeditor.log"]
+        if not terminal_logs:
+            terminal_logs = log_files
+            
+        if not terminal_logs:
+            context.abort(grpc.StatusCode.NOT_FOUND, "No log files found")
+            
+        target = terminal_logs[0]
+        lines_count = request.lines if request.lines > 0 else 100
+        
+        try:
+            with open(target, "r", encoding="utf-16-le", errors="replace") as f:
+                all_lines = f.readlines()
+        except Exception:
+            try:
+                with open(target, "r", encoding="utf-8", errors="replace") as f:
+                    all_lines = f.readlines()
+            except Exception as e:
+                context.abort(grpc.StatusCode.INTERNAL, f"Failed to read log file: {e}")
+                
+        tail = all_lines[-lines_count:] if len(all_lines) > lines_count else all_lines
+        content = [line.rstrip() for line in tail]
+        
+        return terminal_pb2.TerminalLogsResponse(
+            file=target.name,
+            total_lines=len(all_lines),
+            returned_lines=len(tail),
+            content=content
+        )
+
+    def DeployAsset(self, request, context):
+        asset_type_map = {
+            "ea": "Experts",
+            "indicator": "Indicators",
+            "script": "Scripts",
+            "include": "Include",
+            "library": "Libraries",
+        }
+        
+        asset_type = request.asset_type.lower()
+        if asset_type not in asset_type_map:
+            return terminal_pb2.DeployAssetResponse(
+                success=False,
+                destination="",
+                error=f"Invalid asset type '{request.asset_type}'. Valid types: {list(asset_type_map.keys())}"
+            )
+            
+        target_dir = Path("/home/wine/.wine/drive_c/MetaTrader5/MQL5") / asset_type_map[asset_type]
+        try:
+            target_dir.mkdir(parents=True, exist_ok=True)
+            dest_path = target_dir / request.file_name
+            
+            with open(dest_path, "wb") as f:
+                f.write(request.file_content)
+                
+            logger.info(f"Deployed asset {request.file_name} of type {request.asset_type} to {dest_path}")
+            return terminal_pb2.DeployAssetResponse(
+                success=True,
+                destination=str(dest_path),
+                error=""
+            )
+        except Exception as e:
+            logger.error(f"Failed to deploy asset {request.file_name}: {e}")
+            return terminal_pb2.DeployAssetResponse(
+                success=False,
+                destination="",
+                error=str(e)
+            )
+
 
 def serve(port: int = 50051):
-    server = grpc.server(concurrent.futures.ThreadPoolExecutor(max_workers=10))
+    api_key = os.environ.get("SAVISOR_API_KEY")
+    interceptors = []
+    if api_key:
+        logger.info("Enabling API Key authentication interceptor")
+        interceptors.append(APIKeyAuthInterceptor(api_key))
+    else:
+        logger.warning("SAVISOR_API_KEY environment variable not set. API Key authentication is DISABLED.")
+
+    server = grpc.server(
+        concurrent.futures.ThreadPoolExecutor(max_workers=10),
+        interceptors=interceptors
+    )
     terminal_pb2_grpc.add_TerminalServiceServicer_to_server(
         TerminalServiceServicer(), server
     )

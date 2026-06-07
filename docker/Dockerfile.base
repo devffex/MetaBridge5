@@ -31,7 +31,7 @@ RUN mkdir -p /tmp/wheels && \
     --python-version 3.11 \
     --implementation cp \
     --abi cp311 \
-    grpcio grpcio-tools protobuf numpy pandas MetaTrader5 pip setuptools wheel tzdata pytz
+    grpcio grpcio-tools protobuf numpy pandas MetaTrader5 pip setuptools wheel tzdata pytz psutil
 
 # 4. Bootstrap pip, setuptools, and wheel offline by unzipping their wheels into site-packages
 RUN unzip -o /tmp/wheels/pip-*.whl -d /tmp/python/Lib/site-packages/ && \
@@ -133,7 +133,7 @@ RUN --mount=type=bind,from=python-builder,source=/tmp/wheels,target=/home/wine/.
         wine reg add "HKLM\\Software\\Microsoft\\Cryptography\\Defaults\\Provider\\Microsoft Enhanced RSA and AES Cryptographic Provider" /v Type /t REG_DWORD /d 24 /f && \
         wine reg add "HKLM\\Software\\Microsoft\\Cryptography\\Defaults\\Provider\\Microsoft Enhanced RSA and AES Cryptographic Provider" /v SigInFile /t REG_DWORD /d 0 /f && \
         wine C:\\python\\python.exe -m pip install --no-cache-dir --no-index --find-links C:\\wheels \
-            grpcio grpcio-tools protobuf numpy pandas MetaTrader5 tzdata pytz && \
+            grpcio grpcio-tools protobuf numpy pandas MetaTrader5 tzdata pytz psutil && \
         wine C:\\python\\python.exe C:\\import_certs.py && \
         wine C:\\python\\python.exe C:\\daemon\\codegen.py && \
         wine C:\\python\\python.exe -m pip uninstall -y grpcio-tools && \
@@ -166,7 +166,7 @@ RUN --mount=type=bind,from=python-builder,source=/tmp/wheels,target=/home/wine/.
                 riched20.dll riched32.dll usp10.dll \
                 msvcp140.dll msvcp140_1.dll msvcp140_2.dll msvcp140_codecvt_ids.dll vccorlib140.dll \
                 apisetschema.dll profapi.dll psapi.dll \
-                mswsock.dll netutils.dll samlib.dll srvcli.dll cryptdll.dll ncrypt.dll kerberos.dll ntoskrnl.exe hal.dll" && \
+                mswsock.dll netutils.dll samlib.dll srvcli.dll cryptdll.dll ncrypt.dll kerberos.dll ntoskrnl.exe hal.dll pdh.dll powrprof.dll wtsapi32.dll" && \
     PRUNE_REGEX="" && \
     for file in $KEEP_FILES; do \
         if [ -z "$PRUNE_REGEX" ]; then \

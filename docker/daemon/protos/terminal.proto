@@ -46,6 +46,13 @@ service TerminalService {
   rpc GetSymbols(SymbolsRequest) returns (SymbolsResponse);
   rpc GetSymbolInfo(SymbolRequest) returns (SymbolInfoResponse);
   rpc GetSymbolInfoTick(SymbolRequest) returns (TickInfoResponse);
+
+  // Terminal Lifecycle & Operations (MetaForge equivalent actions)
+  rpc StartTerminal(StartTerminalRequest) returns (BoolResponse);
+  rpc StopTerminal(StopTerminalRequest) returns (BoolResponse);
+  rpc GetTerminalStatus(TerminalStatusRequest) returns (TerminalStatusResponse);
+  rpc GetTerminalLogs(TerminalLogsRequest) returns (TerminalLogsResponse);
+  rpc DeployAsset(DeployAssetRequest) returns (DeployAssetResponse);
 }
 
 message HealthRequest {}
@@ -232,4 +239,40 @@ message RatesResponse {
 
 message MarketBookResponse {
   string items_json = 1;
+}
+
+message StartTerminalRequest {}
+
+message StopTerminalRequest {}
+
+message TerminalStatusRequest {}
+
+message TerminalStatusResponse {
+  string status = 1;
+  int32 pid = 2;
+  double cpu_percent = 3;
+  double memory_rss_mb = 4;
+}
+
+message TerminalLogsRequest {
+  int32 lines = 1;
+}
+
+message TerminalLogsResponse {
+  string file = 1;
+  int32 total_lines = 2;
+  int32 returned_lines = 3;
+  repeated string content = 4;
+}
+
+message DeployAssetRequest {
+  string asset_type = 1; // "ea", "indicator", "script", "include", "library"
+  string file_name = 2;
+  bytes file_content = 3;
+}
+
+message DeployAssetResponse {
+  bool success = 1;
+  string destination = 2;
+  string error = 3;
 }
