@@ -31,7 +31,7 @@ RUN mkdir -p /tmp/wheels && \
     --python-version 3.11 \
     --implementation cp \
     --abi cp311 \
-    grpcio grpcio-tools protobuf numpy pandas MetaTrader5 pip setuptools wheel tzdata pytz colorama
+    grpcio grpcio-tools protobuf numpy pandas MetaTrader5 pip setuptools wheel tzdata pytz
 
 # 4. Bootstrap pip, setuptools, and wheel offline by unzipping their wheels into site-packages
 RUN unzip -o /tmp/wheels/pip-*.whl -d /tmp/python/Lib/site-packages/ && \
@@ -41,21 +41,29 @@ RUN unzip -o /tmp/wheels/pip-*.whl -d /tmp/python/Lib/site-packages/ && \
 
 
 # ==========================================
-# STAGE 3: Final Runtime Base Image
+# STAGE 3: Go Supervisor Builder
+# ==========================================
+FROM golang:alpine AS supervisor-builder
+RUN apk add --no-cache git && \
+    git clone https://github.com/ochinchina/supervisord.git /src && \
+    cd /src && \
+    CGO_ENABLED=0 go build -ldflags "-s -w" -o /go/bin/supervisord
+
+
+
+# ==========================================
+# STAGE 4: Final Runtime Base Image
 # ==========================================
 FROM alpine:latest
 
-# Combine apk packages to reduce layer overhead
+# Combine apk packages to reduce layer overhead (Removed curl, unzip, supervisor, python3)
 RUN apk add --no-cache --repository http://dl-cdn.alpinelinux.org/alpine/edge/community \
     bash \
     xvfb \
     freetype \
     fontconfig \
-    supervisor \
     x11vnc \
     wine \
-    curl \
-    unzip \
     gnutls \
     ca-certificates \
     tzdata \
@@ -63,11 +71,18 @@ RUN apk add --no-cache --repository http://dl-cdn.alpinelinux.org/alpine/edge/co
     libfaketime && \
     rm -rf /usr/lib/wine/i386-windows
 
+# Copy the compiled Go supervisord binary
+COPY --from=supervisor-builder /go/bin/supervisord /usr/bin/supervisord
+
 # Set up user and environment variables for Wine
 ENV WINEPREFIX=/home/wine/.wine
 ENV WINEARCH=win64
 ENV DISPLAY=:1
-ENV WINEDLLOVERRIDES="mscoree=disabled"
+ENV WINEDLLOVERRIDES="mscoree,mshtml,winemenubuilder.exe=disabled"
+# Prevent Python from writing bytecode at runtime
+ENV PYTHONDONTWRITEBYTECODE=1
+# Globally silence verbose Wine logging
+ENV WINEDEBUG=-all
 
 # Create wine user and workspace
 RUN adduser -D -u 1000 wine && \
@@ -82,19 +97,14 @@ RUN fc-cache -f
 
 # Copy supervisord configuration and helper scripts
 COPY docker/supervisord.conf /etc/supervisord.conf
-COPY --chown=wine:wine docker/supervisord/dismiss_dialogs.sh /home/wine/dismiss_dialogs.sh
 COPY --chown=wine:wine docker/supervisord/startup_guard.sh /home/wine/startup_guard.sh
 COPY --chown=wine:wine docker/supervisord/vnc_passwd_setup.sh /home/wine/vnc_passwd_setup.sh
 COPY --chown=wine:wine docker/supervisord/entrypoint.sh /home/wine/entrypoint.sh
 COPY --chown=wine:wine docker/daemon/ /home/wine/.wine/drive_c/daemon/
-RUN chmod +x /home/wine/dismiss_dialogs.sh /home/wine/startup_guard.sh /home/wine/vnc_passwd_setup.sh /home/wine/entrypoint.sh
+RUN chmod +x /home/wine/startup_guard.sh /home/wine/vnc_passwd_setup.sh /home/wine/entrypoint.sh
 
-# Copy portable MetaTrader 5 from host and strip unused binaries to save space
+# Copy portable MetaTrader 5 from host (redundant binaries are filtered by .dockerignore)
 COPY --chown=wine:wine MetaTrader5/ /home/wine/.wine/drive_c/MetaTrader5/
-RUN rm -f /home/wine/.wine/drive_c/MetaTrader5/MetaEditor64.exe \
-           /home/wine/.wine/drive_c/MetaTrader5/metatester64.exe \
-           /home/wine/.wine/drive_c/MetaTrader5/uninstall.exe && \
-    rm -rf /home/wine/.wine/drive_c/MetaTrader5/Sounds
 
 # Configure system timezone name for Wine's timezone auto-detection
 RUN echo "UTC" > /etc/timezone
@@ -103,38 +113,87 @@ RUN echo "UTC" > /etc/timezone
 RUN rm -f /home/wine/.wine/drive_c/MetaTrader5/Config/terminal.lic \
           /home/wine/.wine/drive_c/MetaTrader5/Config/accounts.dat
 
-# Perform setup tasks as the wine user
+# Create the VNC password directory and set permissions (run as root)
+RUN mkdir -p /home/wine/.vnc && \
+    chown -R wine:wine /home/wine/.vnc
+
+# Copy Python runtime base (from python-builder)
+COPY --chown=wine:wine --from=python-builder /tmp/python/ /home/wine/.wine/drive_c/python/
+
+# Copy certificate importer script
+COPY --chown=wine:wine docker/import_certs.py /home/wine/.wine/drive_c/import_certs.py
+
+# Single command layer: Run setup commands as wine user, then prune system and prefix files as root
+RUN --mount=type=bind,from=python-builder,source=/tmp/wheels,target=/home/wine/.wine/drive_c/wheels \
+    # 1. Run Wine initialization, registry setup, package installation, cert imports, and codegen as wine user
+    su -s /bin/bash wine -c 'wineboot --init && \
+        wine reg add "HKLM\\Software\\Microsoft\\Cryptography\\Defaults\\Provider Types\\Type 024" /v Name /t REG_SZ /d "Microsoft Enhanced RSA and AES Cryptographic Provider" /f && \
+        wine reg add "HKLM\\Software\\Microsoft\\Cryptography\\Defaults\\Provider Types\\Type 024" /v TypeName /t REG_SZ /d "RSA Full and AES" /f && \
+        wine reg add "HKLM\\Software\\Microsoft\\Cryptography\\Defaults\\Provider\\Microsoft Enhanced RSA and AES Cryptographic Provider" /v "Image Path" /t REG_SZ /d "rsaenh.dll" /f && \
+        wine reg add "HKLM\\Software\\Microsoft\\Cryptography\\Defaults\\Provider\\Microsoft Enhanced RSA and AES Cryptographic Provider" /v Type /t REG_DWORD /d 24 /f && \
+        wine reg add "HKLM\\Software\\Microsoft\\Cryptography\\Defaults\\Provider\\Microsoft Enhanced RSA and AES Cryptographic Provider" /v SigInFile /t REG_DWORD /d 0 /f && \
+        wine C:\\python\\python.exe -m pip install --no-cache-dir --no-index --find-links C:\\wheels \
+            grpcio grpcio-tools protobuf numpy pandas MetaTrader5 tzdata pytz && \
+        wine C:\\python\\python.exe C:\\import_certs.py && \
+        wine C:\\python\\python.exe C:\\daemon\\codegen.py && \
+        wine C:\\python\\python.exe -m pip uninstall -y grpcio-tools && \
+        wineserver -w' && \
+    # 2. Reclaim ownership and delete cert script (now back as root)
+    rm -f /home/wine/.wine/drive_c/import_certs.py && \
+    # Remove Pip/Setuptools/Wheel files
+    rm -rf /home/wine/.wine/drive_c/python/Lib/site-packages/pip* \
+           /home/wine/.wine/drive_c/python/Lib/site-packages/setuptools* \
+           /home/wine/.wine/drive_c/python/Lib/site-packages/wheel* && \
+    # Remove test folders recursively
+    find /home/wine/.wine/drive_c/python/Lib/site-packages -type d \( -name "test" -o -name "tests" \) -exec rm -rf {} + && \
+    # Remove pycache recursively
+    find /home/wine/.wine/drive_c/python -type d -name "__pycache__" -exec rm -rf {} + && \
+    # Remove intermediate wineserver build-time socket files
+    rm -rf /tmp/.wine-1000 && \
+    # Insulate prefix by deleting container root traversal symlink
+    rm -f /home/wine/.wine/dosdevices/z: && \
+    # Create files preservation list regex and prune unused DLLs from system and prefix
+    KEEP_FILES="explorer.exe services.exe winedevice.exe plugplay.exe svchost.exe rpcss.exe \
+                hidclass.sys hidparse.sys mountmgr.sys ndis.sys nsiproxy.sys winebth.sys winebus.sys winehid.sys wineusb.sys \
+                winex11.drv win32u.dll ntdll.dll kernel32.dll kernelbase.dll msvcrt.dll ucrtbase.dll advapi32.dll sechost.dll \
+                crypt32.dll cryptbase.dll bcrypt.dll rsaenh.dll wintrust.dll combase.dll coml2.dll ole32.dll oleaut32.dll \
+                rpcrt4.dll actxprxy.dll user32.dll gdi32.dll gdiplus.dll comctl32.dll comctl32_v6.dll comdlg32.dll compstui.dll dwmapi.dll \
+                imm32.dll msimg32.dll uxtheme.dll ws2_32.dll dnsapi.dll iphlpapi.dll nsi.dll userenv.dll version.dll \
+                dbghelp.dll setupapi.dll shcore.dll shell32.dll shlwapi.dll winspool.drv wevtsvc.dll \
+                vcruntime140.dll vcruntime140_1.dll wineboot.exe reg.exe cmd.exe conhost.exe rundll32.exe \
+                wininet.dll winhttp.dll urlmon.dll jsproxy.dll mpr.dll netapi32.dll secur32.dll schannel.dll credui.dll \
+                opengl32.dll wineopengl.drv wined3d.dll d3d9.dll d3d11.dll dxgi.dll ddraw.dll windowscodecs.dll propsys.dll imagehlp.dll \
+                riched20.dll riched32.dll usp10.dll \
+                msvcp140.dll msvcp140_1.dll msvcp140_2.dll msvcp140_codecvt_ids.dll vccorlib140.dll \
+                apisetschema.dll profapi.dll psapi.dll \
+                mswsock.dll netutils.dll samlib.dll srvcli.dll cryptdll.dll ncrypt.dll kerberos.dll ntoskrnl.exe hal.dll" && \
+    PRUNE_REGEX="" && \
+    for file in $KEEP_FILES; do \
+        if [ -z "$PRUNE_REGEX" ]; then \
+            PRUNE_REGEX="-name $file"; \
+        else \
+            PRUNE_REGEX="$PRUNE_REGEX -o -name $file"; \
+        fi; \
+    done && \
+    find /usr/lib/wine/x86_64-windows -type f ! \( $PRUNE_REGEX -o -name "api-ms-win-*.dll" \) -delete && \
+    find /home/wine/.wine/drive_c/windows/system32 -type f ! \( $PRUNE_REGEX -o -name "api-ms-win-*.dll" \) -delete && \
+    # Prune unused NLS codepage translation files
+    KEEP_NLS="c_10000.nls c_1250.nls c_1251.nls c_1252.nls c_1253.nls c_1254.nls c_1255.nls c_1256.nls c_1257.nls c_1258.nls \
+              c_20127.nls c_437.nls c_874.nls c_932.nls c_936.nls c_949.nls c_950.nls l_intl.nls locale.nls normnfc.nls sortdefault.nls" && \
+    NLS_REGEX="" && \
+    for nls in $KEEP_NLS; do \
+        if [ -z "$NLS_REGEX" ]; then \
+            NLS_REGEX="-name $nls"; \
+        else \
+            NLS_REGEX="$NLS_REGEX -o -name $nls"; \
+        fi; \
+    done && \
+    find /usr/share/wine/nls -type f ! \( $NLS_REGEX \) -delete
+
+# Switch to the wine user for container runtime execution
 USER wine
 WORKDIR /home/wine
 
-# Create the VNC password directory
-RUN mkdir -p /home/wine/.vnc
-
-# Initialize Wine Prefix, register cryptographic providers
-RUN wineboot --init && \
-    wine reg add "HKLM\\Software\\Microsoft\\Cryptography\\Defaults\\Provider Types\\Type 024" /v Name /t REG_SZ /d "Microsoft Enhanced RSA and AES Cryptographic Provider" /f && \
-    wine reg add "HKLM\\Software\\Microsoft\\Cryptography\\Defaults\\Provider Types\\Type 024" /v TypeName /t REG_SZ /d "RSA Full and AES" /f && \
-    wine reg add "HKLM\\Software\\Microsoft\\Cryptography\\Defaults\\Provider\\Microsoft Enhanced RSA and AES Cryptographic Provider" /v "Image Path" /t REG_SZ /d "rsaenh.dll" /f && \
-    wine reg add "HKLM\\Software\\Microsoft\\Cryptography\\Defaults\\Provider\\Microsoft Enhanced RSA and AES Cryptographic Provider" /v Type /t REG_DWORD /d 24 /f && \
-    wine reg add "HKLM\\Software\\Microsoft\\Cryptography\\Defaults\\Provider\\Microsoft Enhanced RSA and AES Cryptographic Provider" /v SigInFile /t REG_DWORD /d 0 /f && \
-    wineserver -w
-
-# Copy the prepared Windows Python and pre-downloaded wheels from Stage 2
-COPY --chown=wine:wine --from=python-builder /tmp/python/ /home/wine/.wine/drive_c/python/
-COPY --chown=wine:wine --from=python-builder /tmp/wheels/ /home/wine/.wine/drive_c/wheels/
-
-# Install the base dependencies offline in Wine Python and clean up the wheels folder
-RUN wine C:\\python\\python.exe -m pip install --no-cache-dir --no-index --find-links C:\\wheels \
-    grpcio grpcio-tools protobuf numpy pandas MetaTrader5 tzdata pytz colorama && \
-    rm -rf /home/wine/.wine/drive_c/wheels
-
-# Copy and run certificate importer to register Alpine root CAs inside Wine
-COPY --chown=wine:wine docker/import_certs.py /home/wine/.wine/drive_c/import_certs.py
-RUN wine C:\\python\\python.exe C:\\import_certs.py && rm /home/wine/.wine/drive_c/import_certs.py && wineserver -w
-
-# Generate gRPC Python stubs from terminal.proto inside Wine
-RUN wine C:\\python\\python.exe C:\\daemon\\codegen.py && wineserver -w
-
 EXPOSE 5900 50051
 
-ENTRYPOINT ["/home/wine/entrypoint.sh"]
+ENTRYPOINT ["/usr/bin/supervisord", "-c", "/etc/supervisord.conf"]

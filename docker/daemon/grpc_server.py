@@ -207,7 +207,7 @@ class TerminalServiceServicer(terminal_pb2_grpc.TerminalServiceServicer):
         info = mt5.terminal_info()
         if info is None:
             logger.info("Initializing MT5 terminal on-demand...")
-            if not mt5.initialize():
+            if not mt5.initialize(path="C:\\MetaTrader5\\terminal64.exe", portable=True):
                 err = mt5.last_error()
                 context.abort(
                     grpc.StatusCode.INTERNAL, f"MT5 initialization failed: {err}"
