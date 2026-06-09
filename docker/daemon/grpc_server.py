@@ -54,6 +54,12 @@ except ImportError:
     class MockMT5:
         def __init__(self):
             self.last_err = (0, "Success")
+            self.symbols = {
+                "EURUSD": {"name": "EURUSD", "visible": True, "path": "Forex\\EURUSD"},
+                "GBPUSD": {"name": "GBPUSD", "visible": True, "path": "Forex\\GBPUSD"},
+                "USDJPY": {"name": "USDJPY", "visible": False, "path": "Forex\\USDJPY"},
+                "AUDUSD": {"name": "AUDUSD", "visible": False, "path": "Forex\\AUDUSD"},
+            }
 
         def initialize(self, *args, **kwargs):
             return True
@@ -135,8 +141,58 @@ except ImportError:
         def copy_rates_range(self, *args, **kwargs):
             return []
 
-        def copy_rates_from_pos(self, *args, **kwargs):
-            return []
+        def copy_rates_from_pos(self, symbol, timeframe, start_pos, count):
+            symbol = symbol.upper()
+            base_price = 1.08
+            if "JPY" in symbol:
+                base_price = 155.0
+            elif "GBP" in symbol:
+                base_price = 1.27
+            
+            # Simple timeframe duration in seconds
+            tf_duration = 3600  # Default H1
+            if timeframe <= 60:
+                tf_duration = timeframe * 60
+            elif timeframe == 16385:
+                tf_duration = 3600
+            elif timeframe == 16408:
+                tf_duration = 86400
+            elif timeframe == 32769:
+                tf_duration = 7 * 86400
+            elif timeframe == 49153:
+                tf_duration = 30 * 86400
+            
+            import random
+            # Seed with symbol and timeframe to make historical walk deterministic for visual testing
+            random.seed(symbol + str(timeframe))
+            
+            now_sec = int(time.time())
+            rates = []
+            
+            # Start walk
+            current_close = base_price
+            for i in range(count - 1, -1, -1):
+                candle_time = now_sec - (i + start_pos) * tf_duration
+                
+                # Make random walk for prices
+                change = random.normalvariate(0, 0.0005 * base_price)
+                open_val = current_close
+                close_val = current_close + change
+                high_val = max(open_val, close_val) + abs(random.normalvariate(0, 0.0002 * base_price))
+                low_val = min(open_val, close_val) - abs(random.normalvariate(0, 0.0002 * base_price))
+                volume = int(random.random() * 500)
+                
+                rates.append({
+                    "time": candle_time,
+                    "open": round(open_val, 5),
+                    "high": round(high_val, 5),
+                    "low": round(low_val, 5),
+                    "close": round(close_val, 5),
+                    "tick_volume": volume
+                })
+                current_close = close_val
+                
+            return rates
 
         def market_book_add(self, *args, **kwargs):
             return True
@@ -147,20 +203,56 @@ except ImportError:
         def market_book_get(self, *args, **kwargs):
             return []
 
-        def symbol_select(self, *args, **kwargs):
+        def symbol_select(self, symbol, enable):
+            symbol = symbol.upper()
+            if symbol in self.symbols:
+                self.symbols[symbol]["visible"] = enable
+                return True
+            # Dynamically add if not exists
+            self.symbols[symbol] = {"name": symbol, "visible": enable, "path": f"Forex\\{symbol}"}
             return True
 
         def symbols_total(self):
-            return 0
+            return len(self.symbols)
 
-        def symbols_get(self, *args, **kwargs):
-            return []
+        def symbols_get(self, group=""):
+            # If group is specified, we can filter, but returning all is fine
+            return list(self.symbols.values())
 
-        def symbol_info(self, *args, **kwargs):
+        def symbol_info(self, symbol):
+            symbol = symbol.upper()
+            if symbol in self.symbols:
+                # Mock a basic symbol info class
+                class SymbolInfo:
+                    def __init__(self, name, visible):
+                        self.name = name
+                        self.visible = visible
+                    def _asdict(self):
+                        return {"name": self.name, "visible": self.visible}
+                sym = self.symbols[symbol]
+                return SymbolInfo(sym["name"], sym["visible"])
             return None
 
-        def symbol_info_tick(self, *args, **kwargs):
-            return None
+        def symbol_info_tick(self, symbol):
+            symbol = symbol.upper()
+            base_price = 1.08
+            if "JPY" in symbol:
+                base_price = 155.0
+            elif "GBP" in symbol:
+                base_price = 1.27
+                
+            import random
+            jitter = random.normalvariate(0, 0.0001 * base_price)
+            bid = base_price + jitter
+            ask = bid + 0.00005 * base_price
+            
+            return {
+                "time": int(time.time()),
+                "bid": round(bid, 5),
+                "ask": round(ask, 5),
+                "last": round(bid, 5),
+                "volume": int(random.random() * 5)
+            }
 
         def login(self, *args, **kwargs):
             return True

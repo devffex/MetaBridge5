@@ -17,8 +17,12 @@ build-pipeline:
 build-bot:
 	docker build -f apps/trading-bot/Dockerfile -t savisor-bot:latest .
 
-# 4. Build all targets sequentially
-build-all: build-base build-pipeline build-bot
+# 4. Build the standalone Chart Analysis Gateway container
+build-chart-gateway:
+	docker build -f apps/chart-gateway/Dockerfile -t savisor-chart-gateway:latest .
+
+# 5. Build all targets sequentially
+build-all: build-base build-pipeline build-bot build-chart-gateway
 
 # ==============================================================================
 # Standalone Container Running Targets (Local Testing)
@@ -49,3 +53,13 @@ run-bot:
 		-e SAVISOR_API_KEY="test-api-key" \
 		-e VNC_PASSWORD="test-vnc-password" \
 		savisor-bot:latest
+
+# Run the Chart Gateway locally with API port 8000 and VNC port 5900 exposed
+run-chart-gateway:
+	docker run -it --rm \
+		--name savisor-chart-gateway-run \
+		-p 8000:8000 \
+		-p 5900:5900 \
+		-e SAVISOR_API_KEY="test-api-key" \
+		-e VNC_PASSWORD="test-vnc-password" \
+		savisor-chart-gateway:latest
