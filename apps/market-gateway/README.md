@@ -261,3 +261,25 @@ docker run -d --name savisor-market-node \
   savisor-market-node:latest
 ```
 
+---
+
+## 7. Software Engineering & Testing Standards
+
+The Savisor Market Node implements enterprise backend design patterns and a comprehensive 12-perspective unit testing engine:
+
+* **Backend Design Patterns Applied**:
+  * **Factory & Strategy**: `StorageFactory` and `StorageBackend` strategies (`GitHub`, `S3`, `Local`).
+  * **Observer (Pub/Sub)**: `EventBroadcaster` (SSE) and `Candle0Manager` period-close callbacks.
+  * **Composite Pattern**: `CompositeAuditSink` grouping multiple telemetry destinations.
+  * **Adapter Pattern**: `TerminalGRPCClient` adapting low-level Protobuf RPC stubs.
+  * **Stream Sink Pattern**: `StreamParquetSink` chunked memory buffering, Snappy compression, and atomic upload.
+  * **Repository Pattern**: `SQLiteAuditSink` parameterized WAL queries and schema encapsulation.
+  * **Dependency Injection**: `BackfillWorker` receiving explicit service interfaces.
+* **12-Perspective Testing Engine**:
+  * Evaluates all 12 testing dimensions (Happy Path, Error Handling, Boundary Value Analysis, Edge Cases, State/FSM, Concurrency, Resource Teardown, Security/SQLi Sanitization, Idempotency, Performance Budgets, Schema Contracts, and UTC Determinism).
+  * Run perspective test suite:
+    ```bash
+    PYTHONPATH=apps/market-gateway uv run --project apps/market-gateway pytest apps/market-gateway/tests/test_perspectives_matrix.py -v
+    ```
+
+
