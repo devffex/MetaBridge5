@@ -22,37 +22,57 @@ The **Savisor Market Data & Pipeline Node** is a self-contained, high-performanc
 
 ---
 
-## Operational Workflow
+## Operational Workflow: Manual vs. Automated Operations
 
-> [!NOTE]
-> **100% Automated Ingestion & Backfills**:
-> You do **not** need to open MT5 charts or click on timeframe buttons. The MetaTrader 5 terminal daemon automatically fetches historical candles directly from the broker servers when queried by `BackfillWorker`. Once logged into the trading account via VNC, all data collection, backfills, Parquet generation, and CDN updates are fully automated via the REST and WebSocket APIs.
+> [!IMPORTANT]
+> **Zero Manual Chart Clicking Required**:
+> You do **NOT** need to open MetaTrader 5 chart windows, scroll through historical bars, or manually click on `M1`, `M5`, `H1`, `D1` timeframe buttons to download broker history.
+>
+> The MetaTrader 5 terminal daemon automatically communicates with the broker's trade servers and downloads requested history in the background. Once logged into your broker account, **all further operations are 100% automated via REST and WebSocket APIs**.
+
+### Operational Breakdown
+
+| Operation | Mode | How It Works |
+|---|---|---|
+| **Broker Account Login** | **One-Time Setup** | Connect once via TigerVNC (`vncviewer localhost:5900`, password: `savisorpass`) to log in to your broker account, or pre-authenticate in the portable `MetaTrader5/` directory before building. |
+| **Asset Watchlist Activation** | **100% Automated** | Call `POST /api/v1/symbols/active` with `{"symbol": "EURUSD"}`. The node activates the symbol in the broker's Market Watch. |
+| **Broker History Downloads** | **100% Automated** | `BackfillWorker` queries MT5 via gRPC. The terminal daemon automatically downloads missing history from the broker in the background. |
+| **Multi-Timeframe Generation (`M1`..`MN1`)** | **100% Automated** | Automatically generates datasets across all timeframes without opening chart windows. |
+| **Parquet & Compact JSON Exports** | **100% Automated** | Compresses historical bars into Apache Parquet (`history.parquet`) and compact JSON (`recent.json`). |
+| **Multi-CDN Sync & Edge Cache Purge** | **100% Automated** | Commits datasets to GitHub (`devffex/dataset`) and purges the jsDelivr edge cache automatically. |
+| **Live Tick & Candle 0 Streaming** | **100% Automated** | Streams live ticks and aggregates the active forming Candle 0 over WebSockets (`WS /api/v1/market/ws/{symbol}`). |
 
 ---
 
 ## 2. Quick Start & Local Build
 
 > [!IMPORTANT]
-> The Docker image must be built locally from the monorepo root directory (it is not hosted on public Docker Hub).
+> **Build Locally First (Avoid "pull access denied")**:
+> The `savisor-market-node:latest` image is built locally within this monorepo and is **not published on public Docker Hub**.
+> If you execute `docker run savisor-market-node:latest` before building, Docker will attempt to pull the image from Docker Hub and fail with `pull access denied`.
+>
+> Build and run the image from the **monorepo root directory**:
 
-### Option A: Using Docker Compose (Recommended)
-From the repository root:
+### Option A: Using Docker Compose (Simplest)
+From the monorepo root:
 ```bash
-# Build and start container in one command:
+# Automatically builds and starts the container in one command:
 docker compose up -d --build
 
-# Follow logs:
+# Follow live container logs:
 docker compose logs -f
 ```
 
-### Option B: Using Makefile & Docker Run
-From the repository root:
+### Option B: Using Makefile & Docker Run (Two-Step Local Build)
+From the monorepo root:
 ```bash
-# 1. Build images
+# 1. Build the shared Wine + MT5 base image
 make build-base
+
+# 2. Build the market node image
 make build-market-node
 
-# 2. Run container
+# 3. Run the container
 docker run -d --name savisor-market-node \
   -p 8000:8000 \
   -p 5900:5900 \
@@ -67,20 +87,30 @@ docker run -d --name savisor-market-node \
   savisor-market-node:latest
 ```
 
-### Option C: Connect via VNC (TigerVNC)
-To log in to your broker account in the MetaTrader 5 GUI:
+---
+
+### 3. Connecting via TigerVNC
+
+To perform the one-time broker authentication inside the virtualized Wine MetaTrader 5 desktop:
+
 ```bash
-# Connect using TigerVNC Viewer
+# Connect using TigerVNC CLI
 vncviewer localhost:5900
 ```
-* **Password**: `savisorpass` (or the value set in `VNC_PASSWORD`).
-* Log in via `File -> Login to Trade Account`, verify the green connection status in MT5, and close VNC.
+*(Or launch the **TigerVNC Viewer** GUI and enter `localhost:5900` or `127.0.0.1:5900`)*
 
-
+1. **VNC Password**: When prompted, enter `savisorpass` (or the custom value configured in `VNC_PASSWORD`).
+2. **Authenticate MT5**:
+   - Go to `File -> Login to Trade Account`.
+   - Enter your Broker **Login**, **Password**, and **Server**.
+   - Check **Save password** and click **OK**.
+   - Confirm connection in the bottom right corner (green/blue signal bars).
+3. **Close VNC**: You can safely close TigerVNC. All further data operations are 100% automated by the API.
 
 ---
 
-## 3. API Directory
+## 4. API Directory
+
 
 ### Telemetry & Health
 * `GET /health` — Node and daemon liveness probe (Public).
