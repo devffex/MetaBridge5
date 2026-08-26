@@ -67,6 +67,16 @@ docker run -d --name savisor-market-node \
   savisor-market-node:latest
 ```
 
+### Option C: Connect via VNC (TigerVNC)
+To log in to your broker account in the MetaTrader 5 GUI:
+```bash
+# Connect using TigerVNC Viewer
+vncviewer localhost:5900
+```
+* **Password**: `savisorpass` (or the value set in `VNC_PASSWORD`).
+* Log in via `File -> Login to Trade Account`, verify the green connection status in MT5, and close VNC.
+
+
 
 ---
 

@@ -155,7 +155,28 @@ docker compose logs -f
 
 ---
 
+### 3. Connecting to the Container via VNC (TigerVNC)
+
+To perform the one-time broker authentication inside the virtualized Wine MetaTrader 5 desktop, connect using **TigerVNC Viewer**:
+
+```bash
+# Connect using TigerVNC CLI
+vncviewer localhost:5900
+```
+*(Or launch the **TigerVNC Viewer** GUI application and enter `localhost:5900` or `127.0.0.1:5900`)*
+
+1. **VNC Password**: When prompted, enter `savisorpass` (or the value set in `VNC_PASSWORD`).
+2. **Authenticate MT5**: 
+   - Go to `File -> Login to Trade Account`.
+   - Enter your Broker Login, Password, and Server name.
+   - Check **Save password** and click **OK**.
+   - Confirm connection in the bottom right corner (green/blue signal bars).
+3. **Close VNC**: Once logged in, you can safely close TigerVNC. All further market data operations are 100% automated by the API.
+
+---
+
 ## Operational Workflow: Manual vs. Automated Operations
+
 
 > [!IMPORTANT]
 > **Zero Manual Chart Clicking Required**:
