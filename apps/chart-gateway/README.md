@@ -78,9 +78,19 @@ docker run -d --name savisor-chart-node \
 
 ---
 
+---
+
 ## 4. Testing & Verification
 
 Run the full automated test suite:
 ```bash
 PYTHONPATH=apps/chart-gateway uv run --project apps/chart-gateway pytest apps/chart-gateway/tests -v
 ```
+
+---
+
+## 5. Complete Client Integration Documentation
+
+For complete client integration examples (TradingView Lightweight Charts in React/TypeScript, Python Trading Bots with indicator warmup, DuckDB / Polars ML pipelines, and full REST/WS schema specs), see:
+👉 **[Client API & Integration Guide](../../docs/client_api.md)**
+

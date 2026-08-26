@@ -60,7 +60,15 @@ Savisor supports two distinct engineering approaches for interacting with the Me
 
 ---
 
+## Documentation & Client Integration Guides
+* 📖 **[Client API & Integration Guide](file:///home/julio/Work/savisor/savisor-node/docs/client_api.md)** — Complete guide for connecting React/TradingView charts, Python bots, DuckDB/Polars ML pipelines, REST snapshot endpoints, and live WebSocket streaming.
+* 📦 **[Base Image Optimization](file:///home/julio/Work/savisor/savisor-node/docs/base_image_optimization.md)** — Wine, font caching, and Python binary insulation specs.
+* ⚡ **[MetaTrader Lightweight Tuning](file:///home/julio/Work/savisor/savisor-node/docs/metatrader_lightweight.md)** — Resource throttling and headless memory management.
+
+---
+
 ## Directory Layout
+
 
 ```text
 savisor-monorepo/
