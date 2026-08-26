@@ -1,6 +1,6 @@
 # MetaTrader 5 Authentication Persistence Guide (Docker Named Volumes)
 
-This guide explains why MetaTrader 5 broker credentials fail when copying portable files across machines, and documents the production approach using **Persistent Docker Named Volumes** for volume creation, cross-machine archiving/restoration, on-demand broker switching, and parallel multi-broker ingestion.
+This guide explains why MetaTrader 5 broker credentials fail when copying portable files across machines, and documents the production approach using **Persistent Docker Named Volumes** for volume creation, cross-machine archiving/restoration, on-demand broker switching, and parallel multi-broker ingestion using pure Docker CLI commands.
 
 ---
 
@@ -48,8 +48,8 @@ The production-grade solution is to **persist the entire MetaTrader 5 installati
 
 ```mermaid
 flowchart LR
-    ContainerV1["savisor-market-node (v1.0)"] -->|"Mounts /drive_c/MetaTrader5"| Volume[("Docker Named Volume: savisor_mt5_data")]
-    ContainerV2["savisor-market-node (v2.0 Upgrade)"] -->|"Mounts /drive_c/MetaTrader5"| Volume
+    ContainerV1["savisor-market-node (v1.0)"] -->|"Mounts /home/wine/.wine"| Volume[("Docker Named Volume: savisor_mt5_data")]
+    ContainerV2["savisor-market-node (v2.0 Upgrade)"] -->|"Mounts /home/wine/.wine"| Volume
     Volume -->|"Preserves Session & Cryptographic Keys"| Connected["100% Authenticated to Broker"]
 ```
 
@@ -63,22 +63,20 @@ flowchart LR
 docker volume create savisor_mt5_data
 ```
 
+---
+
 ### Step 2: Run the Container with the Volume Attached
 
 ```bash
 docker run -it --rm --name savisor-market-node \
   -p 8000:8000 \
   -p 5900:5900 \
-  -v savisor_mt5_data:/home/wine/.wine/drive_c/MetaTrader5 \
-  -e SAVISOR_API_KEY="your_secret_api_key_here" \
-  -e VNC_PASSWORD="your_vnc_password_here" \
-  -e STORAGE_BACKEND="github" \
-  -e GITHUB_TOKEN="ghp_yourPersonalAccessTokenHere" \
-  -e GITHUB_REPO="your_organization/your_dataset_repo" \
-  -e GITHUB_BRANCH="main" \
-  -e AUDIT_LOG_SINK="sqlite" \
+  -v savisor_mt5_data:/home/wine/.wine \
+  --env-file /home/julio/Work/savisor/savisor-node/apps/market-gateway/.env \
   savisor-market-node:latest
 ```
+
+---
 
 ### Step 3: Perform the One-Time Broker Login via TigerVNC
 
@@ -95,32 +93,18 @@ docker run -it --rm --name savisor-market-node \
 
 ---
 
-### Step 4: Docker Compose Setup (Single Node)
+### Step 4: Running in Background (Production)
 
-Configure your `docker-compose.yml` to use named volumes automatically:
+Once authenticated, you can launch the container as a persistent background daemon:
 
-```yaml
-version: "3.8"
-
-services:
-  market-node:
-    image: savisor-market-node:latest
-    build:
-      context: ../../
-      dockerfile: docker/Dockerfile.market-gateway
-    container_name: savisor-market-node
-    restart: unless-stopped
-    ports:
-      - "8000:8000"
-      - "5900:5900"
-    volumes:
-      - savisor_mt5_data:/home/wine/.wine/drive_c/MetaTrader5
-    env_file:
-      - .env
-
-volumes:
-  savisor_mt5_data:
-    driver: local
+```bash
+docker run -d --name savisor-market-node \
+  --restart unless-stopped \
+  -p 8000:8000 \
+  -p 5900:5900 \
+  -v savisor_mt5_data:/home/wine/.wine \
+  --env-file /home/julio/Work/savisor/savisor-node/apps/market-gateway/.env \
+  savisor-market-node:latest
 ```
 
 ---
@@ -147,7 +131,7 @@ sequenceDiagram
 
 ---
 
-#### The Critical Technical Requirement: What You Must Archive
+### The Critical Technical Requirement: What You Must Archive
 
 > [!IMPORTANT]
 > **Capture the Entire Wine Prefix & Cryptographic Salts**:
@@ -225,8 +209,6 @@ docker run -it --rm --name savisor-market-node \
 ### Result
 The container on Machine B mounts the restored volume at `/home/wine/.wine`, detects the identical cryptographic session, and **boots 100% connected to your broker with zero manual VNC viewer interaction or password entry required**.
 
-
-
 ---
 
 ## 5. Pattern 1: Switching Between Broker Accounts on a Single Container
@@ -266,7 +248,8 @@ docker volume create savisor_mt5_ftmo_live
   ```bash
   docker run -it --rm --name savisor-market-node \
     -p 8000:8000 -p 5900:5900 \
-    -v savisor_mt5_icmarkets_demo:/home/wine/.wine/drive_c/MetaTrader5 \
+    -v savisor_mt5_icmarkets_demo:/home/wine/.wine \
+    --env-file /home/julio/Work/savisor/savisor-node/apps/market-gateway/.env.icmarkets \
     savisor-market-node:latest
   ```
   Connect via VNC (`vncviewer localhost:5900`), log into **IC Markets**, verify connection, and exit (`Ctrl+C`).
@@ -275,7 +258,8 @@ docker volume create savisor_mt5_ftmo_live
   ```bash
   docker run -it --rm --name savisor-market-node \
     -p 8000:8000 -p 5900:5900 \
-    -v savisor_mt5_ftmo_live:/home/wine/.wine/drive_c/MetaTrader5 \
+    -v savisor_mt5_ftmo_live:/home/wine/.wine \
+    --env-file /home/julio/Work/savisor/savisor-node/apps/market-gateway/.env.ftmo \
     savisor-market-node:latest
   ```
   Connect via VNC (`vncviewer localhost:5900`), log into **FTMO**, verify connection, and exit (`Ctrl+C`).
@@ -288,8 +272,8 @@ To run the container with **Broker A**:
 ```bash
 docker run -it --rm --name savisor-market-node \
   -p 8000:8000 -p 5900:5900 \
-  -v savisor_mt5_icmarkets_demo:/home/wine/.wine/drive_c/MetaTrader5 \
-  --env-file .env.icmarkets \
+  -v savisor_mt5_icmarkets_demo:/home/wine/.wine \
+  --env-file /home/julio/Work/savisor/savisor-node/apps/market-gateway/.env.icmarkets \
   savisor-market-node:latest
 ```
 
@@ -297,8 +281,8 @@ To stop and switch to **Broker B**:
 ```bash
 docker run -it --rm --name savisor-market-node \
   -p 8000:8000 -p 5900:5900 \
-  -v savisor_mt5_ftmo_live:/home/wine/.wine/drive_c/MetaTrader5 \
-  --env-file .env.ftmo \
+  -v savisor_mt5_ftmo_live:/home/wine/.wine \
+  --env-file /home/julio/Work/savisor/savisor-node/apps/market-gateway/.env.ftmo \
   savisor-market-node:latest
 ```
 
@@ -308,7 +292,7 @@ docker run -it --rm --name savisor-market-node \
 
 ## 6. Pattern 2: Running Multiple Broker Nodes Concurrently (Parallel Ingestion)
 
-If you need to collect real-time data, stream WebSockets, or backfill from **multiple brokers simultaneously**, run multiple container instances side-by-side on distinct host ports, with each container attached to its dedicated volume:
+If you need to collect real-time data, stream WebSockets, or backfill from **multiple brokers simultaneously**, run multiple container instances side-by-side on distinct host ports, with each container attached to its dedicated volume using pure Docker commands:
 
 ```mermaid
 flowchart LR
@@ -332,69 +316,48 @@ flowchart LR
 
 ---
 
-### Complete Multi-Broker Compose Configuration (`docker-compose.multi.yml`)
+### Launching the Multi-Broker Nodes via Docker CLI
 
-```yaml
-version: "3.8"
+#### 1. Launch Node 1 (IC Markets Demo on Port 8001):
+```bash
+docker run -d --name savisor-node-icmarkets \
+  --restart unless-stopped \
+  -p 8001:8000 \
+  -p 5901:5900 \
+  -v savisor_mt5_icmarkets_demo:/home/wine/.wine \
+  --env-file /home/julio/Work/savisor/savisor-node/apps/market-gateway/.env.icmarkets \
+  -e VNC_PASSWORD="vnc_icmarkets_pass" \
+  savisor-market-node:latest
+```
 
-services:
-  # ============================================================================
-  # Node 1: IC Markets (Demo Ingestion & Testing)
-  # ============================================================================
-  market-node-icmarkets:
-    image: savisor-market-node:latest
-    container_name: savisor-node-icmarkets
-    restart: unless-stopped
-    ports:
-      - "8001:8000"   # API & WebSockets accessible on host port 8001
-      - "5901:5900"   # TigerVNC accessible on host port 5901
-    volumes:
-      - savisor_mt5_icmarkets_demo:/home/wine/.wine/drive_c/MetaTrader5
-    env_file:
-      - .env.icmarkets
-    environment:
-      - VNC_PASSWORD=vnc_icmarkets_pass
-
-  # ============================================================================
-  # Node 2: FTMO (Live Ingestion & Production Feeds)
-  # ============================================================================
-  market-node-ftmo:
-    image: savisor-market-node:latest
-    container_name: savisor-node-ftmo
-    restart: unless-stopped
-    ports:
-      - "8002:8000"   # API & WebSockets accessible on host port 8002
-      - "5902:5900"   # TigerVNC accessible on host port 5902
-    volumes:
-      - savisor_mt5_ftmo_live:/home/wine/.wine/drive_c/MetaTrader5
-    env_file:
-      - .env.ftmo
-    environment:
-      - VNC_PASSWORD=vnc_ftmo_pass
-
-volumes:
-  savisor_mt5_icmarkets_demo:
-    driver: local
-  savisor_mt5_ftmo_live:
-    driver: local
+#### 2. Launch Node 2 (FTMO Live on Port 8002):
+```bash
+docker run -d --name savisor-node-ftmo \
+  --restart unless-stopped \
+  -p 8002:8000 \
+  -p 5902:5900 \
+  -v savisor_mt5_ftmo_live:/home/wine/.wine \
+  --env-file /home/julio/Work/savisor/savisor-node/apps/market-gateway/.env.ftmo \
+  -e VNC_PASSWORD="vnc_ftmo_pass" \
+  savisor-market-node:latest
 ```
 
 ---
 
-### Managing the Multi-Broker Cluster
+### Managing the Running Nodes
 
 ```bash
-# 1. Start all broker nodes in parallel
-docker compose -f docker-compose.multi.yml up -d
+# View active broker containers
+docker ps
 
-# 2. View logs for IC Markets node
-docker compose -f docker-compose.multi.yml logs -f market-node-icmarkets
+# Follow logs for IC Markets node
+docker logs -f savisor-node-icmarkets
 
-# 3. View logs for FTMO node
-docker compose -f docker-compose.multi.yml logs -f market-node-ftmo
+# Follow logs for FTMO node
+docker logs -f savisor-node-ftmo
 
-# 4. Check status of both nodes
-docker compose -f docker-compose.multi.yml ps
+# Stop both nodes
+docker stop savisor-node-icmarkets savisor-node-ftmo
 ```
 
 ---
