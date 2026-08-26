@@ -173,25 +173,30 @@ sequenceDiagram
 Run these commands on your original machine while `savisor-market-node` is running:
 
 ```bash
-# 1. Create the compressed archive inside the container
+# 1. Create the compressed archive inside the running container
 docker exec savisor-market-node tar -czf /tmp/savisor_mt5_session.tar.gz -C /home/wine/.wine .
 
-# 2. Copy the archive to your current host directory
-docker cp savisor-market-node:/tmp/savisor_mt5_session.tar.gz ./savisor_mt5_session.tar.gz
+# 2. Copy the archive directly to the apps/market-gateway directory
+docker cp savisor-market-node:/tmp/savisor_mt5_session.tar.gz /home/julio/Work/savisor/savisor-node/apps/market-gateway/savisor_mt5_session.tar.gz
 
 # 3. Clean up the temporary archive inside the container
 docker exec savisor-market-node rm -f /tmp/savisor_mt5_session.tar.gz
 ```
 
+*The archive is saved to:*
+```text
+/home/julio/Work/savisor/savisor-node/apps/market-gateway/savisor_mt5_session.tar.gz
+```
+
 ---
 
 #### Step 2: Store in a Secure Private Location
-Upload `savisor_mt5_session.tar.gz` to your **private repository** or private cloud object storage.
+Upload `apps/market-gateway/savisor_mt5_session.tar.gz` to your **private repository** or private cloud object storage.
 
 ---
 
 #### Step 3: Restore into a New Volume on Machine B (Destination Machine)
-On your destination machine or cloud server:
+On your destination machine or cloud server (from the `apps/market-gateway` directory):
 
 ```bash
 # 1. Create the named volume on Machine B
@@ -200,7 +205,7 @@ docker volume create savisor_mt5_data
 # 2. Extract the archive into the new volume
 docker run --rm \
   -v savisor_mt5_data:/to_volume \
-  -v $(pwd):/backup \
+  -v /home/julio/Work/savisor/savisor-node/apps/market-gateway:/backup \
   alpine tar -xzf /backup/savisor_mt5_session.tar.gz -C /to_volume
 ```
 
@@ -213,12 +218,13 @@ docker run -it --rm --name savisor-market-node \
   -p 8000:8000 \
   -p 5900:5900 \
   -v savisor_mt5_data:/home/wine/.wine \
-  --env-file .env \
+  --env-file /home/julio/Work/savisor/savisor-node/apps/market-gateway/.env \
   savisor-market-node:latest
 ```
 
 ### Result
 The container on Machine B mounts the restored volume at `/home/wine/.wine`, detects the identical cryptographic session, and **boots 100% connected to your broker with zero manual VNC viewer interaction or password entry required**.
+
 
 
 ---
