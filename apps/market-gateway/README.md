@@ -211,7 +211,13 @@ vncviewer localhost:5900
 5. Verify connection status in the bottom right corner (green/blue signal bars).
 6. **Close TigerVNC**: You do **NOT** need to keep VNC open or manually click on charts. All further operations are 100% automated by the API.
 
+> [!TIP]
+> **Permanent Session Persistence & Workarounds**:
+> To learn why MT5 credentials fail when copying portable folders across different operating systems, and how to persist sessions across container updates without re-logging in (via Named Volumes, Container Snapshots, or Programmatic API login), see the full guide:
+> 👉 **[MetaTrader 5 Authentication Persistence & Portability Guide](docs/authentication_persistence.md)**
+
 ---
+
 
 ## 4. Container Health & Telemetry Probes Explained
 
