@@ -33,7 +33,7 @@ docker compose up -d
 curl -i http://localhost:8000/health
 ```
 
-### B. Run with GitHub Storage Backend (Free CDN)
+### B. Run with GitHub + jsDelivr Multi-CDN Backend
 ```bash
 docker run -d --name savisor-market-node \
   -p 8000:8000 \
@@ -41,8 +41,9 @@ docker run -d --name savisor-market-node \
   -e SAVISOR_API_KEY="your-secret-api-key" \
   -e STORAGE_BACKEND="github" \
   -e GITHUB_TOKEN="ghp_xxx" \
-  -e GITHUB_REPO="your-org/market-data" \
+  -e GITHUB_REPO="devffex/dataset" \
   -e GITHUB_BRANCH="main" \
+  -e GITHUB_CDN_BASE_URL="https://cdn.jsdelivr.net/gh/devffex/dataset@main" \
   -e AUDIT_LOG_SINK="sqlite" \
   savisor-market-node:latest
 ```
