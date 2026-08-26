@@ -123,13 +123,32 @@ make build-market-node
 make build-pipeline
 make build-bot
 
-# Or build all images sequentially
-make build-all
-```
+---
+
+## Operational Workflow: Manual vs. Automated Operations
+
+> [!IMPORTANT]
+> **Zero Manual Chart Clicking Required**:
+> You do **NOT** need to open MetaTrader 5 chart windows, scroll through historical bars, or manually click on `M1`, `M5`, `H1`, `D1` timeframe buttons to download broker history.
+>
+> The MetaTrader 5 terminal daemon automatically communicates with the broker's trade servers and downloads requested history in the background. Once logged into your broker account, **all further operations (symbol provisioning, multi-timeframe backfilling, Parquet export, CDN syncing, cache purging, and sub-second tick streaming) are 100% automated via REST and WebSocket APIs**.
+
+### Operational Breakdown
+
+| Operation | Mode | How It Works |
+|---|---|---|
+| **Broker Account Login** | **One-Time Setup** | Connect once via VNC (`localhost:5900`, password: `savisorpass`) to log in to your broker account, or pre-authenticate in the portable `MetaTrader5/` directory before building. |
+| **Asset Watchlist Activation** | **100% Automated** | Call `POST /api/v1/symbols/active` with `{"symbol": "EURUSD"}`. The node activates the symbol in the broker's Market Watch. |
+| **Broker History Downloads** | **100% Automated** | `BackfillWorker` queries MT5 via gRPC. The terminal daemon automatically downloads missing history from the broker in the background. |
+| **Multi-Timeframe Generation (`M1`..`MN1`)** | **100% Automated** | Automatically generates datasets across all timeframes without opening chart windows. |
+| **Parquet & Compact JSON Exports** | **100% Automated** | Compresses historical bars into Apache Parquet (`history.parquet`) and compact JSON (`recent.json`). |
+| **Multi-CDN Sync & Edge Cache Purge** | **100% Automated** | Commits datasets to GitHub (`devffex/dataset`) and purges the jsDelivr edge cache automatically. |
+| **Live Tick & Candle 0 Streaming** | **100% Automated** | Streams live ticks and aggregates the active forming Candle 0 over WebSockets (`WS /api/v1/market/ws/{symbol}`). |
 
 ---
 
 ## Running Locally with GitHub Storage (jsDelivr Multi-CDN) & SQLite Database
+
 
 You can run the **Savisor Market Data Node** locally with:
 - **Storage Target**: **GitHub Public Repository + jsDelivr Multi-CDN** (`devffex/dataset`) for high-availability worldwide dataset distribution with $0 bandwidth cost, multi-CDN edge failover (Cloudflare + Fastly + BunnyCDN), and instant cache invalidation on candle closures.

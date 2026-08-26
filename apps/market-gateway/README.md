@@ -22,7 +22,16 @@ The **Savisor Market Data & Pipeline Node** is a self-contained, high-performanc
 
 ---
 
+## Operational Workflow
+
+> [!NOTE]
+> **100% Automated Ingestion & Backfills**:
+> You do **not** need to open MT5 charts or click on timeframe buttons. The MetaTrader 5 terminal daemon automatically fetches historical candles directly from the broker servers when queried by `BackfillWorker`. Once logged into the trading account via VNC, all data collection, backfills, Parquet generation, and CDN updates are fully automated via the REST and WebSocket APIs.
+
+---
+
 ## 2. Quick Start
+
 
 ### A. Run with Docker Compose
 ```bash
