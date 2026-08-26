@@ -135,17 +135,134 @@ make run-bot
 
 ---
 
+---
+
+## Running Locally with GitHub Storage & SQLite Database
+
+You can run the **Savisor Autonomous Node** locally with:
+- **Storage Target**: **GitHub Public/Private Repository** (for free versioned storage and global CDN access via `raw.githubusercontent.com`).
+- **Telemetry & Audit Database**: **Internal SQLite in WAL mode** (zero-overhead microsecond audit logging inside `/home/wine/data/traces.sqlite3`).
+
+### 1. Prerequisites
+1. A GitHub Personal Access Token (PAT) with `repo` scope (or fine-grained token with `Contents: Read and write`).
+2. A GitHub repository to host the datasets (e.g. `your-username/market-data`).
+
+### 2. Configuration (`.env`)
+Create a `.env` file in the repository root:
+
+```ini
+SAVISOR_API_KEY=dev_savisor_secret_key_123
+VNC_PASSWORD=savisorpass
+
+# 1. Storage Backend: GitHub Free CDN
+STORAGE_BACKEND=github
+GITHUB_TOKEN=ghp_yourGitHubPersonalAccessTokenHere
+GITHUB_REPO=your-username/market-data
+GITHUB_BRANCH=main
+
+# 2. Audit & Telemetry Database: Local SQLite in WAL mode
+AUDIT_LOG_SINK=sqlite
+
+# Optional: Run with Mock MT5 data for testing without live broker connection
+METAFORGE_MOCK_MT5=1
+```
+
+### 3. Launch the Node
+
+#### Option A: Using Docker Compose
+```bash
+# Build and start the container in background
+docker compose up -d
+
+# Follow live container logs
+docker compose logs -f
+```
+
+#### Option B: Using Direct Docker Run
+```bash
+docker run -d --name savisor-node \
+  -p 8000:8000 \
+  -p 5900:5900 \
+  -e SAVISOR_API_KEY="dev_savisor_secret_key_123" \
+  -e VNC_PASSWORD="savisorpass" \
+  -e STORAGE_BACKEND="github" \
+  -e GITHUB_TOKEN="ghp_yourGitHubPersonalAccessTokenHere" \
+  -e GITHUB_REPO="your-username/market-data" \
+  -e GITHUB_BRANCH="main" \
+  -e AUDIT_LOG_SINK="sqlite" \
+  -e METAFORGE_MOCK_MT5="1" \
+  savisor-chart-gateway:latest
+```
+
+---
+
+### 4. Verify & Trigger Data Ingestion
+
+#### A. Verify Health and Telemetry Probes
+```bash
+# Liveness Probe
+curl -i http://localhost:8000/health
+
+# Readiness Probe
+curl -i http://localhost:8000/ready
+
+# Prometheus Telemetry Metrics
+curl http://localhost:8000/metrics
+```
+
+#### B. Provision an Asset & Trigger Auto-Backfill to GitHub
+```bash
+curl -i -X POST http://localhost:8000/api/v1/symbols/active \
+  -H "X-API-Key: dev_savisor_secret_key_123" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "symbol": "EURUSD",
+    "auto_backfill": true,
+    "candle_count": 5000
+  }'
+```
+This triggers the `BackfillWorker` to:
+1. Pull 5,000 historical bars across timeframes (`M1` to `MN1`) from MT5.
+2. Compress into Apache Parquet (`data/EURUSD/H1/history.parquet`) and compact JSON (`data/EURUSD/H1/recent.json`).
+3. Commit the datasets directly to your GitHub repository on branch `main`.
+4. Generate `data/EURUSD/manifest.json`.
+
+#### C. Inspect Generated Datasets on GitHub & Global CDN
+* **GitHub Web UI**: `https://github.com/your-username/market-data/tree/main/data/EURUSD`
+* **Raw CDN URL**: `https://raw.githubusercontent.com/your-username/market-data/main/data/EURUSD/H1/history.parquet`
+* **Recent 500 Candles JSON**: `https://raw.githubusercontent.com/your-username/market-data/main/data/EURUSD/H1/recent.json`
+
+#### D. Query Internal SQLite Audit & Trace Logs
+```bash
+curl -i -H "X-API-Key: dev_savisor_secret_key_123" \
+  "http://localhost:8000/api/v1/telemetry/traces?symbol=EURUSD&limit=10"
+```
+
+#### E. Stream Real-Time Candle 0 & Live Ticks
+```bash
+# Instant in-flight Candle 0 snapshot (M1 timeframe)
+curl -i -H "X-API-Key: dev_savisor_secret_key_123" \
+  "http://localhost:8000/api/v1/chart/candle0?symbol=EURUSD&timeframe=M1"
+
+# Connect to WebSocket stream (using wscat or frontend chart)
+wscat -c ws://localhost:8000/api/v1/chart/ws/EURUSD
+```
+
+---
+
 ## Local Development & Unit Tests
 
-API logic, tests, and formatting are managed using `uv` inside the gateway app directory:
+API logic, tests, and formatting are managed using `uv` inside the chart-gateway app directory:
 
 ```bash
-# Sync local virtual environment
-uv sync --project apps/gateway/api
+# Sync local virtual environment with all dependency groups
+uv sync --project apps/chart-gateway --all-groups
 
-# Run linter checks
-uv run --project apps/gateway/api ruff check
+# Run linter and formatter checks
+uv run --project apps/chart-gateway ruff check apps/chart-gateway/src apps/chart-gateway/tests
+uv run --project apps/chart-gateway ruff format apps/chart-gateway/src apps/chart-gateway/tests
 
-# Run unit tests (utilizing MockMT5 fallback)
-uv run --project apps/gateway/api pytest
+# Run the 12-Perspective Unit Test Suite (28 tests)
+PYTHONPATH=apps/chart-gateway uv run --project apps/chart-gateway pytest apps/chart-gateway/tests -v
 ```
+
