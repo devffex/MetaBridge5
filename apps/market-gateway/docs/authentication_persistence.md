@@ -1,6 +1,6 @@
 # MetaTrader 5 Authentication Persistence Guide (Docker Named Volumes)
 
-This guide explains why MetaTrader 5 broker credentials fail when copying portable files across machines, and documents the production approach using **Persistent Docker Named Volumes** for single-node setups, on-demand broker switching, parallel multi-broker ingestion, and **cross-machine volume archiving/restoration**.
+This guide explains why MetaTrader 5 broker credentials fail when copying portable files across machines, and documents the production approach using **Persistent Docker Named Volumes** for volume creation, cross-machine archiving/restoration, on-demand broker switching, and parallel multi-broker ingestion.
 
 ---
 
@@ -125,9 +125,102 @@ volumes:
 
 ---
 
-## 4. Pattern 1: Switching Between Broker Accounts on a Single Container
+## 4. Volume Backup, Export & Cross-Machine Portability (Archiving & Restoring)
 
-One of the biggest advantages of Docker named volumes is filesystem isolation. You can maintain multiple dedicated volumes for different broker accounts (e.g. Demo vs. Live, or multiple prop firms) and **hot-swap between them on demand on a single container host**.
+Once you have provisioned and authenticated a volume on Machine A, you can export it into a compressed `.tar.gz` archive, store it securely, and restore it onto **any other Linux machine, VPS, or cloud host**.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Dev as Engineer
+    participant HostA as Machine A (Source)
+    participant Sec as Secure Private Storage (Private Repo / S3)
+    participant HostB as Machine B (Destination Cloud Host)
+
+    Dev->>HostA: Export savisor_mt5_data volume to tar.gz archive
+    HostA->>Sec: Store savisor_mt5_session.tar.gz (100% PRIVATE)
+    Dev->>HostB: Pull savisor_mt5_session.tar.gz
+    HostB->>HostB: Create new named volume & extract archive
+    HostB->>HostB: Launch savisor-market-node container
+    Note over HostB: Container boots 100% authenticated with zero VNC setup!
+```
+
+---
+
+### The Critical Technical Requirement: What You Must Archive
+
+> [!IMPORTANT]
+> **Do NOT zip the `MetaTrader5` folder from a host Windows machine!**
+> You must archive the authenticated **Docker volume directory** created inside the Wine container environment.
+> 
+> When you archive the Docker volume (`/home/wine/.wine/drive_c/MetaTrader5`), all internal session tokens, server lists, and relative Wine directory paths are captured. When extracted into a new volume on Machine B, the new container mounts the exact same structure and connects immediately.
+
+---
+
+### The Critical Security Rule
+
+> [!CAUTION]
+> **Store in 100% Private Locations Only**:
+> The `savisor_mt5_session.tar.gz` archive contains your encrypted broker tokens and trading session states.
+> * **Never** upload this archive to a public GitHub repository.
+> * Store it **only** in a 100% private GitHub repository, private S3/Cloudflare R2 bucket, or an encrypted local drive.
+
+---
+
+### Step-by-Step Export and Restore Procedure
+
+#### Step 1: Export & Compress the Volume on Machine A (Source Machine)
+Run this command on your original machine to package the volume into a compressed archive in your current directory:
+
+```bash
+docker run --rm \
+  -v savisor_mt5_data:/from_volume \
+  -v $(pwd):/backup \
+  alpine tar -czvf /backup/savisor_mt5_session.tar.gz -C /from_volume .
+```
+
+---
+
+#### Step 2: Store in a Secure Private Location
+Upload `savisor_mt5_session.tar.gz` to your **private repository** or private cloud object storage.
+
+---
+
+#### Step 3: Restore into a New Volume on Machine B (Destination Machine)
+On your destination machine or cloud server:
+
+```bash
+# 1. Create the new named volume on Machine B
+docker volume create savisor_mt5_data
+
+# 2. Extract the archive into the new volume
+docker run --rm \
+  -v savisor_mt5_data:/to_volume \
+  -v $(pwd):/backup \
+  alpine tar -xzvf /backup/savisor_mt5_session.tar.gz -C /to_volume
+```
+
+---
+
+#### Step 4: Launch the Container on Machine B
+
+```bash
+docker run -it --rm --name savisor-market-node \
+  -p 8000:8000 \
+  -p 5900:5900 \
+  -v savisor_mt5_data:/home/wine/.wine/drive_c/MetaTrader5 \
+  --env-file .env \
+  savisor-market-node:latest
+```
+
+### Result
+The container on Machine B mounts the restored volume, detects the authenticated session, and **boots 100% connected to your broker with zero manual VNC viewer interaction or password entry**.
+
+---
+
+## 5. Pattern 1: Switching Between Broker Accounts on a Single Container
+
+You can maintain multiple dedicated volumes for different broker accounts (e.g. Demo vs. Live, or multiple prop firms) and **hot-swap between them on demand on a single container host**.
 
 ```mermaid
 flowchart TD
@@ -202,7 +295,7 @@ docker run -it --rm --name savisor-market-node \
 
 ---
 
-## 5. Pattern 2: Running Multiple Broker Nodes Concurrently (Parallel Ingestion)
+## 6. Pattern 2: Running Multiple Broker Nodes Concurrently (Parallel Ingestion)
 
 If you need to collect real-time data, stream WebSockets, or backfill from **multiple brokers simultaneously**, run multiple container instances side-by-side on distinct host ports, with each container attached to its dedicated volume:
 
@@ -292,99 +385,6 @@ docker compose -f docker-compose.multi.yml logs -f market-node-ftmo
 # 4. Check status of both nodes
 docker compose -f docker-compose.multi.yml ps
 ```
-
----
-
-## 6. Pattern 3: Backup, Export & Cross-Machine Volume Portability (Zipping / Archiving)
-
-If you need to migrate an authenticated broker session to a **new physical machine, VPS, or cloud server**, you can export the Docker volume into a compressed `.tar.gz` archive, store it securely, and restore it on the destination machine.
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Dev as Engineer
-    participant HostA as Machine A (Original Host)
-    participant Sec as Secure Private Storage (Private Repo / S3)
-    participant HostB as Machine B (Destination Cloud Server)
-
-    Dev->>HostA: Export savisor_mt5_data volume to tar.gz archive
-    HostA->>Sec: Store savisor_mt5_session.tar.gz securely (100% PRIVATE)
-    Dev->>HostB: Pull savisor_mt5_session.tar.gz
-    HostB->>HostB: Create new named volume & extract archive
-    HostB->>HostB: Launch savisor-market-node container
-    Note over HostB: Node starts 100% authenticated with zero VNC setup!
-```
-
----
-
-### The Critical Technical Requirement: What You Must Archive
-
-> [!IMPORTANT]
-> **Do NOT zip the `MetaTrader5` folder from a host Windows machine!**
-> You must archive the authenticated **Docker volume directory** created inside the Wine container environment. 
-> 
-> When you archive the Docker volume (`/home/wine/.wine/drive_c/MetaTrader5`), all internal session tokens, server lists, and relative Wine directory paths are captured. When extracted into a new volume on Machine B, the new container mounts the exact same structure and connects immediately.
-
----
-
-### The Critical Security Rule
-
-> [!CAUTION]
-> **Store in 100% Private Locations Only**:
-> The `savisor_mt5_session.tar.gz` archive contains your encrypted broker tokens and trading session states.
-> * **Never** upload this archive to a public GitHub repository.
-> * Store it **only** in a 100% private GitHub repository, private S3/Cloudflare R2 bucket, or an encrypted local drive.
-
----
-
-### Step-by-Step Export and Restore Procedure
-
-#### Step 1: Export & Compress the Volume on Machine A
-Run this command on your original machine to package the volume into a compressed archive in your current directory:
-
-```bash
-docker run --rm \
-  -v savisor_mt5_data:/from_volume \
-  -v $(pwd):/backup \
-  alpine tar -czvf /backup/savisor_mt5_session.tar.gz -C /from_volume .
-```
-
----
-
-#### Step 2: Store in a Secure Private Location
-Upload `savisor_mt5_session.tar.gz` to your **private repository** or private cloud object storage.
-
----
-
-#### Step 3: Restore into a New Volume on Machine B (Destination Machine)
-On your destination machine or cloud server:
-
-```bash
-# 1. Create the new named volume on Machine B
-docker volume create savisor_mt5_data
-
-# 2. Extract the archive into the new volume
-docker run --rm \
-  -v savisor_mt5_data:/to_volume \
-  -v $(pwd):/backup \
-  alpine tar -xzvf /backup/savisor_mt5_session.tar.gz -C /to_volume
-```
-
----
-
-#### Step 4: Launch the Container on Machine B
-
-```bash
-docker run -it --rm --name savisor-market-node \
-  -p 8000:8000 \
-  -p 5900:5900 \
-  -v savisor_mt5_data:/home/wine/.wine/drive_c/MetaTrader5 \
-  --env-file .env \
-  savisor-market-node:latest
-```
-
-### Result
-The container on Machine B mounts the restored volume, detects the authenticated session, and **boots 100% connected to your broker with zero manual VNC viewer interaction or password entry**.
 
 ---
 
