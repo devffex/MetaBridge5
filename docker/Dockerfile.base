@@ -159,44 +159,8 @@ RUN --mount=type=bind,from=python-builder,source=/tmp/wheels,target=/home/wine/.
     mkdir -p /home/wine/.wine/drive_c/users/wine/AppData/Roaming/MetaQuotes/Terminal/BF9336D047DCCACD9080FDBCE04D3DE5 && \
     rm -rf /home/wine/.wine/drive_c/users/wine/AppData/Roaming/MetaQuotes/Terminal/BF9336D047DCCACD9080FDBCE04D3DE5/liveupdate && \
     touch /home/wine/.wine/drive_c/users/wine/AppData/Roaming/MetaQuotes/Terminal/BF9336D047DCCACD9080FDBCE04D3DE5/liveupdate && \
-    chmod 444 /home/wine/.wine/drive_c/users/wine/AppData/Roaming/MetaQuotes/Terminal/BF9336D047DCCACD9080FDBCE04D3DE5/liveupdate && \
-    # Create files preservation list regex and prune unused DLLs from system and prefix
-    KEEP_FILES="explorer.exe services.exe winedevice.exe plugplay.exe svchost.exe rpcss.exe \
-                hidclass.sys hidparse.sys mountmgr.sys ndis.sys nsiproxy.sys winebth.sys winebus.sys winehid.sys wineusb.sys \
-                winex11.drv win32u.dll ntdll.dll kernel32.dll kernelbase.dll msvcrt.dll ucrtbase.dll advapi32.dll sechost.dll \
-                crypt32.dll cryptbase.dll bcrypt.dll rsaenh.dll wintrust.dll combase.dll coml2.dll ole32.dll oleaut32.dll \
-                rpcrt4.dll actxprxy.dll user32.dll gdi32.dll gdiplus.dll comctl32.dll comctl32_v6.dll comdlg32.dll compstui.dll dwmapi.dll \
-                imm32.dll msimg32.dll uxtheme.dll ws2_32.dll dnsapi.dll iphlpapi.dll nsi.dll userenv.dll version.dll \
-                dbghelp.dll setupapi.dll shcore.dll shell32.dll shlwapi.dll winspool.drv wevtsvc.dll \
-                vcruntime140.dll vcruntime140_1.dll wineboot.exe reg.exe cmd.exe conhost.exe rundll32.exe \
-                wininet.dll winhttp.dll urlmon.dll jsproxy.dll mpr.dll netapi32.dll secur32.dll schannel.dll credui.dll \
-                opengl32.dll wineopengl.drv wined3d.dll d3d9.dll d3d11.dll dxgi.dll ddraw.dll windowscodecs.dll propsys.dll imagehlp.dll \
-                riched20.dll riched32.dll usp10.dll \
-                msvcp140.dll msvcp140_1.dll msvcp140_2.dll msvcp140_codecvt_ids.dll vccorlib140.dll \
-                apisetschema.dll profapi.dll psapi.dll \
-                mswsock.dll netutils.dll samlib.dll srvcli.dll cryptdll.dll ncrypt.dll kerberos.dll ntoskrnl.exe hal.dll pdh.dll powrprof.dll wtsapi32.dll" && \
-    PRUNE_REGEX="" && \
-    for file in $KEEP_FILES; do \
-        if [ -z "$PRUNE_REGEX" ]; then \
-            PRUNE_REGEX="-name $file"; \
-        else \
-            PRUNE_REGEX="$PRUNE_REGEX -o -name $file"; \
-        fi; \
-    done && \
-    find /usr/lib/wine/x86_64-windows -type f ! \( $PRUNE_REGEX -o -name "api-ms-win-*.dll" \) -delete && \
-    find /home/wine/.wine/drive_c/windows/system32 -type f ! \( $PRUNE_REGEX -o -name "api-ms-win-*.dll" \) -delete && \
-    # Prune unused NLS codepage translation files
-    KEEP_NLS="c_10000.nls c_1250.nls c_1251.nls c_1252.nls c_1253.nls c_1254.nls c_1255.nls c_1256.nls c_1257.nls c_1258.nls \
-              c_20127.nls c_437.nls c_874.nls c_932.nls c_936.nls c_949.nls c_950.nls l_intl.nls locale.nls normnfc.nls sortdefault.nls" && \
-    NLS_REGEX="" && \
-    for nls in $KEEP_NLS; do \
-        if [ -z "$NLS_REGEX" ]; then \
-            NLS_REGEX="-name $nls"; \
-        else \
-            NLS_REGEX="$NLS_REGEX -o -name $nls"; \
-        fi; \
-    done && \
-    find /usr/share/wine/nls -type f ! \( $NLS_REGEX \) -delete
+    chmod 444 /home/wine/.wine/drive_c/users/wine/AppData/Roaming/MetaQuotes/Terminal/BF9336D047DCCACD9080FDBCE04D3DE5/liveupdate
+
 
 # Switch to the wine user for container runtime execution
 USER wine
