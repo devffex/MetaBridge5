@@ -129,28 +129,29 @@ make build-all
 
 ---
 
-## Running Locally with GitHub Storage & SQLite Database
+## Running Locally with GitHub Storage (jsDelivr Multi-CDN) & SQLite Database
 
 You can run the **Savisor Market Data Node** locally with:
-- **Storage Target**: **GitHub Public/Private Repository** (for free versioned storage and global CDN access via `raw.githubusercontent.com`).
+- **Storage Target**: **GitHub Public Repository + jsDelivr Multi-CDN** (`devffex/dataset`) for high-availability worldwide dataset distribution with $0 bandwidth cost, multi-CDN edge failover (Cloudflare + Fastly + BunnyCDN), and instant cache invalidation on candle closures.
 - **Telemetry & Audit Database**: **Internal SQLite in WAL mode** (zero-overhead microsecond audit logging inside `/home/wine/data/traces.sqlite3`).
 
 ### 1. Prerequisites
 1. A GitHub Personal Access Token (PAT) with `repo` scope (or fine-grained token with `Contents: Read and write`).
-2. A GitHub repository to host the datasets (e.g. `your-username/market-data`).
+2. A GitHub repository to host the datasets (e.g. `devffex/dataset`).
 
-### 2. Configuration (`.env`)
-Create a `.env` file in the repository root:
+### 2. Configuration (`apps/market-gateway/.env`)
+Create/update `apps/market-gateway/.env`:
 
 ```ini
-SAVISOR_API_KEY=dev_savisor_secret_key_123
+SAVISOR_API_KEY=savisor_live_secret_key_9812
 VNC_PASSWORD=savisorpass
 
-# 1. Storage Backend: GitHub Free CDN
+# 1. Storage Backend: GitHub + jsDelivr Multi-CDN
 STORAGE_BACKEND=github
 GITHUB_TOKEN=ghp_yourGitHubPersonalAccessTokenHere
-GITHUB_REPO=your-username/market-data
+GITHUB_REPO=devffex/dataset
 GITHUB_BRANCH=main
+GITHUB_CDN_BASE_URL=https://cdn.jsdelivr.net/gh/devffex/dataset@main
 
 # 2. Audit & Telemetry Database: Local SQLite in WAL mode
 AUDIT_LOG_SINK=sqlite
@@ -175,12 +176,13 @@ docker compose logs -f
 docker run -d --name savisor-market-node \
   -p 8000:8000 \
   -p 5900:5900 \
-  -e SAVISOR_API_KEY="dev_savisor_secret_key_123" \
+  -e SAVISOR_API_KEY="savisor_live_secret_key_9812" \
   -e VNC_PASSWORD="savisorpass" \
   -e STORAGE_BACKEND="github" \
   -e GITHUB_TOKEN="ghp_yourGitHubPersonalAccessTokenHere" \
-  -e GITHUB_REPO="your-username/market-data" \
+  -e GITHUB_REPO="devffex/dataset" \
   -e GITHUB_BRANCH="main" \
+  -e GITHUB_CDN_BASE_URL="https://cdn.jsdelivr.net/gh/devffex/dataset@main" \
   -e AUDIT_LOG_SINK="sqlite" \
   -e METAFORGE_MOCK_MT5="1" \
   savisor-market-node:latest
@@ -205,7 +207,7 @@ curl http://localhost:8000/metrics
 #### B. Provision an Asset & Trigger Auto-Backfill to GitHub
 ```bash
 curl -i -X POST http://localhost:8000/api/v1/symbols/active \
-  -H "X-API-Key: dev_savisor_secret_key_123" \
+  -H "X-API-Key: savisor_live_secret_key_9812" \
   -H "Content-Type: application/json" \
   -d '{
     "symbol": "EURUSD",
@@ -216,29 +218,32 @@ curl -i -X POST http://localhost:8000/api/v1/symbols/active \
 This triggers the `BackfillWorker` to:
 1. Pull 5,000 historical bars across timeframes (`M1` to `MN1`) from MT5.
 2. Compress into Apache Parquet (`data/EURUSD/H1/history.parquet`) and compact JSON (`data/EURUSD/H1/recent.json`).
-3. Commit the datasets directly to your GitHub repository on branch `main`.
-4. Generate `data/EURUSD/manifest.json`.
+3. Commit the datasets directly to `devffex/dataset` on branch `main`.
+4. Trigger the jsDelivr edge purge API (`https://purge.jsdelivr.net/...`) for instant cache invalidation.
+5. Generate `data/EURUSD/manifest.json`.
 
-#### C. Inspect Generated Datasets on GitHub & Global CDN
-* **GitHub Web UI**: `https://github.com/your-username/market-data/tree/main/data/EURUSD`
-* **Raw CDN URL**: `https://raw.githubusercontent.com/your-username/market-data/main/data/EURUSD/H1/history.parquet`
-* **Recent 500 Candles JSON**: `https://raw.githubusercontent.com/your-username/market-data/main/data/EURUSD/H1/recent.json`
+#### C. Inspect Generated Datasets on jsDelivr Global Multi-CDN
+* **Parquet History**: `https://cdn.jsdelivr.net/gh/devffex/dataset@main/data/EURUSD/H1/history.parquet`
+* **Recent 500 Candles JSON**: `https://cdn.jsdelivr.net/gh/devffex/dataset@main/data/EURUSD/H1/recent.json`
+* **Asset Manifest**: `https://cdn.jsdelivr.net/gh/devffex/dataset@main/data/EURUSD/manifest.json`
+* **GitHub Repository View**: `https://github.com/devffex/dataset/tree/main/data/EURUSD`
 
 #### D. Query Internal SQLite Audit & Trace Logs
 ```bash
-curl -i -H "X-API-Key: dev_savisor_secret_key_123" \
+curl -i -H "X-API-Key: savisor_live_secret_key_9812" \
   "http://localhost:8000/api/v1/telemetry/traces?symbol=EURUSD&limit=10"
 ```
 
 #### E. Stream Real-Time Candle 0 & Live Ticks
 ```bash
 # Instant in-flight Candle 0 snapshot (M1 timeframe)
-curl -i -H "X-API-Key: dev_savisor_secret_key_123" \
+curl -i -H "X-API-Key: savisor_live_secret_key_9812" \
   "http://localhost:8000/api/v1/market/candle0?symbol=EURUSD&timeframe=M1"
 
 # Connect to WebSocket stream (using wscat or frontend chart)
 wscat -c ws://localhost:8000/api/v1/market/ws/EURUSD
 ```
+
 
 ---
 

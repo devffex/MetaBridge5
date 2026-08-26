@@ -75,8 +75,21 @@ def test_github_storage_backend(mock_client_class):
     assert backend.upload_bytes(b"data", "EURUSD/H1.parquet") is True
     assert (
         backend.get_public_url("EURUSD/H1.parquet")
+        == "https://cdn.jsdelivr.net/gh/org/market-data@main/EURUSD/H1.parquet"
+    )
+
+    # With explicit custom CDN base URL
+    backend_custom = GitHubStorageBackend(
+        token="test_token",
+        repo="org/market-data",
+        branch="main",
+        cdn_base_url="https://raw.githubusercontent.com/org/market-data/main",
+    )
+    assert (
+        backend_custom.get_public_url("EURUSD/H1.parquet")
         == "https://raw.githubusercontent.com/org/market-data/main/EURUSD/H1.parquet"
     )
+
 
 
 @patch("boto3.client")

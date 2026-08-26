@@ -23,14 +23,17 @@ class GitHubStorageBackend(StorageBackend):
         repo: str | None = None,
         branch: str = "main",
         cdn_base_url: str | None = None,
+        enable_jsdelivr_purge: bool = True,
     ):
         self.token = token or os.environ.get("GITHUB_TOKEN", "")
         self.repo = repo or os.environ.get("GITHUB_REPO", "")
         self.branch = branch or os.environ.get("GITHUB_BRANCH", "main")
         self.cdn_base_url = cdn_base_url or os.environ.get("GITHUB_CDN_BASE_URL", "")
+        self.enable_jsdelivr_purge = enable_jsdelivr_purge
 
         if not self.cdn_base_url and self.repo:
-            self.cdn_base_url = f"https://raw.githubusercontent.com/{self.repo}/{self.branch}"
+            # Default to jsDelivr Multi-CDN (Cloudflare + Fastly edge servers) for public repos
+            self.cdn_base_url = f"https://cdn.jsdelivr.net/gh/{self.repo}@{self.branch}"
 
         self.api_base = f"https://api.github.com/repos/{self.repo}"
         self.headers = {
@@ -40,7 +43,11 @@ class GitHubStorageBackend(StorageBackend):
         if self.token:
             self.headers["Authorization"] = f"Bearer {self.token}"
 
-        logger.info(f"Initialized GitHubStorageBackend for repo '{self.repo}' branch '{self.branch}'")
+        logger.info(
+            f"Initialized GitHubStorageBackend for repo '{self.repo}' branch '{self.branch}' "
+            f"(CDN: {self.cdn_base_url})"
+        )
+
 
     def _get_file_sha(self, remote_path: str) -> str | None:
         """Fetches the current blob SHA of an existing file in GitHub."""
@@ -86,6 +93,8 @@ class GitHubStorageBackend(StorageBackend):
                 res = client.put(url, headers=self.headers, json=payload)
                 if res.status_code in (200, 201):
                     logger.info(f"Successfully committed {clean_path} to GitHub ({len(data)} bytes)")
+                    if self.enable_jsdelivr_purge and "jsdelivr.net" in self.cdn_base_url:
+                        self._purge_jsdelivr_cache(clean_path)
                     return True
                 else:
                     logger.error(f"Failed to commit to GitHub: {res.status_code} - {res.text}")
@@ -93,6 +102,20 @@ class GitHubStorageBackend(StorageBackend):
         except Exception as e:
             logger.error(f"Exception during GitHub upload_bytes for {clean_path}: {e}")
             return False
+
+    def _purge_jsdelivr_cache(self, clean_path: str):
+        """Triggers jsDelivr instant cache invalidation API."""
+        purge_url = f"https://purge.jsdelivr.net/gh/{self.repo}@{self.branch}/{clean_path}"
+        try:
+            with httpx.Client(timeout=5.0) as client:
+                res = client.get(purge_url)
+                if res.status_code == 200:
+                    logger.debug(f"Purged jsDelivr cache for {clean_path}")
+                else:
+                    logger.warning(f"jsDelivr cache purge returned {res.status_code} for {clean_path}")
+        except Exception as e:
+            logger.warning(f"Could not purge jsDelivr cache for {clean_path}: {e}")
+
 
     def upload_file(
         self,
