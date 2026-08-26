@@ -105,6 +105,9 @@ class BackfillRequest(BaseModel):
     symbol: str
     timeframes: list[str] | None = None
     candle_count: int = 10000
+    date_from: str | None = None
+    date_to: str | None = None
+
 
 
 @asynccontextmanager
@@ -303,7 +306,10 @@ async def trigger_backfill(
                 symbol=symbol,
                 timeframes=payload.timeframes,
                 candle_count=payload.candle_count,
+                date_from=payload.date_from,
+                date_to=payload.date_to,
             )
+
 
     background_tasks.add_task(_do_backfill)
     return {

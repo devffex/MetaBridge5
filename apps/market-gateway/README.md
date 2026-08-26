@@ -1,25 +1,26 @@
 # Savisor Market Node: Complete Application Handbook
 
-The **Savisor Market Node** is an autonomous, production-grade market data collection, in-flight **Candle 0** engine, and historical dataset pipeline designed for MetaTrader 5 broker terminals. It runs inside a containerized Wine runtime alongside a high-throughput FastAPI/WebSocket server and automated pipeline workers managed by supervisord.
+The **Savisor Market Node** is an autonomous, production-grade financial market data collection, real-time in-flight **Candle 0** engine, and historical dataset pipeline designed for MetaTrader 5 broker terminals. It runs inside a containerized Wine runtime alongside a high-throughput FastAPI/WebSocket server and automated pipeline workers managed by supervisord.
 
-This handbook is the definitive reference manual covering all operations, configurations, asset provisioning workflows, real-time data streaming contracts, historical dataset schemas, CDN distribution, and telemetry inspection.
+This handbook is the complete, self-contained reference manual covering all operations, configurations, asset provisioning workflows, real-time data streaming contracts, historical dataset schemas, CDN distribution, and telemetry inspection for this application.
 
 ---
 
 ## Handbook Table of Contents
 
 1. [Architecture & Container Topology](#1-architecture--container-topology)
-2. [Configuration & Environment Reference](#2-configuration--environment-reference)
-3. [Container Operations & Lifecycle](#3-container-operations--lifecycle)
-4. [Asset Discovery & Dynamic Provisioning](#4-asset-discovery--dynamic-provisioning)
-5. [Real-Time Streaming & In-Flight Candle 0 Engine](#5-real-time-streaming--in-flight-candle-0-engine)
-6. [Historical Data Ingestion & Backfill Pipeline](#6-historical-data-ingestion--backfill-pipeline)
-7. [Historical Rates REST Queries](#7-historical-rates-rest-queries)
-8. [Data Assets, Storage Formats & Multi-CDN Distribution](#8-data-assets-storage-formats--multi-cdn-distribution)
-9. [Observability, Logs & Telemetry](#9-observability-logs--telemetry)
-10. [Client Integration Recipes](#10-client-integration-recipes)
-11. [Complete API Directory](#11-complete-api-directory)
-12. [Local Testing & Development](#12-local-testing--development)
+2. [Configuration & Environment Reference (Zero Secrets)](#2-configuration--environment-reference-zero-secrets)
+3. [Container Operations & Lifecycle (Live Foreground Streaming)](#3-container-operations--lifecycle-live-foreground-streaming)
+4. [Container Health & Telemetry Probes Explained](#4-container-health--telemetry-probes-explained)
+5. [Asset Discovery & Dynamic Provisioning](#5-asset-discovery--dynamic-provisioning)
+6. [Real-Time Streaming & In-Flight Candle 0 Engine](#6-real-time-streaming--in-flight-candle-0-engine)
+7. [Full Historical Ingestion & Batch Chunking Pipeline](#7-full-historical-ingestion--batch-chunking-pipeline)
+8. [Historical Rates REST Queries](#8-historical-rates-rest-queries)
+9. [Data Assets, Storage Formats & Multi-CDN Distribution](#9-data-assets-storage-formats--multi-cdn-distribution)
+10. [Observability, Logs & Telemetry](#10-observability-logs--telemetry)
+11. [Client Integration Recipes](#11-client-integration-recipes)
+12. [Complete API Directory](#12-complete-api-directory)
+13. [Local Testing & Development](#13-local-testing--development)
 
 ---
 
@@ -43,7 +44,7 @@ flowchart TD
             FastAPIServer["FastAPI Gateway & Auth Guard (X-API-Key)"]
             GRPCClient["TerminalGRPCClient (Channel Pooling, 64MB Limit)"]
             Candle0Engine["Candle0Manager (In-Flight Bar Aggregator)"]
-            PipelineWorker["BackfillWorker (Timeframe Sync Pipeline)"]
+            PipelineWorker["BackfillWorker (Chunked Sync Pipeline)"]
             ParquetExporter["Parquet & Compact JSON Exporter"]
             StorageFactory["StorageFactory (Strategy Pattern)"]
             AuditFactory["AuditLoggerFactory (Factory Pattern)"]
@@ -78,7 +79,7 @@ flowchart TD
     Candle0Engine -->|"Broadcast In-Flight OHLCV"| WebSocketHub
     Candle0Engine -->|"On Period Rollover (M1..MN1)"| PipelineWorker
 
-    GRPCClient -->|"Fetch Historical Bars"| PipelineWorker
+    GRPCClient -->|"Fetch Batch Chunks (25k Bars)"| PipelineWorker
     PipelineWorker --> ParquetExporter
     ParquetExporter --> StorageFactory
 
@@ -107,30 +108,30 @@ flowchart TD
 
 ### Container Process Supervision Matrix
 
-All container services are isolated and orchestrated via `supervisord` (`/etc/supervisord.conf`):
+All container services are orchestrated via `supervisord` (`/etc/supervisord.conf`):
 
 | Service | Process / Binary | Role | Port |
 |---|---|---|---|
 | **`xvfb`** | `Xvfb :1 -screen 0 1920x1080x16` | Headless virtual display buffer. | Internal |
 | **`x11vnc`** | `x11vnc -display :1 -rfbauth ...` | Remote desktop server for one-time broker setup. | `5900` |
 | **`wine`** | `terminal64.exe /portable` | Native Windows MetaTrader 5 trading terminal. | Outbound |
-| **`api`** | `grpc_server.py 50051` | Windows Python gRPC daemon with `SafeMT5Lock`. | `50051` (internal) |
+| **`api`** | `grpc_server.py 50051` | Windows Python gRPC daemon with `SafeMT5Lock` (64MB buffer). | `50051` (internal) |
 | **`market-gateway`** | `uvicorn app.main:app --port 8000` | Linux Python REST API, WebSocket broadcaster & pipeline. | `8000` |
 
 ---
 
-## 2. Configuration & Environment Reference
+## 2. Configuration & Environment Reference (Zero Secrets)
 
-Configuration is managed via environment variables passed directly to the container or configured inside `apps/market-gateway/.env`:
+Configure your `.env` file inside `apps/market-gateway/.env` using the following sanitized template. **Never commit production credentials to version control**:
 
 ```ini
 # ==============================================================================
-# Savisor Market Node Configuration (.env)
+# Savisor Market Node Configuration Template (.env)
 # ==============================================================================
 
-# 1. API Security & VNC Desktop
-SAVISOR_API_KEY=savisor_live_secret_key_9812
-VNC_PASSWORD=savisorpass
+# 1. API Security & VNC Password
+SAVISOR_API_KEY=your_secret_api_key_here
+VNC_PASSWORD=your_vnc_password_here
 
 # 2. MT5 gRPC Daemon Connection
 MT5_GRPC_SERVER=127.0.0.1:50051
@@ -138,19 +139,19 @@ MT5_GRPC_SERVER=127.0.0.1:50051
 # 3. Storage Backend Strategy ('github' | 's3' | 'local')
 STORAGE_BACKEND=github
 
-# 4. GitHub & jsDelivr Multi-CDN Configuration
-GITHUB_TOKEN=ghp_yourGitHubPersonalAccessToken
-GITHUB_REPO=devffex/dataset
+# 4. GitHub & jsDelivr Multi-CDN Configuration (Used when STORAGE_BACKEND=github)
+GITHUB_TOKEN=ghp_yourPersonalAccessTokenHere
+GITHUB_REPO=your_organization/your_dataset_repo
 GITHUB_BRANCH=main
-GITHUB_CDN_BASE_URL=https://cdn.jsdelivr.net/gh/devffex/dataset@main
+GITHUB_CDN_BASE_URL=https://cdn.jsdelivr.net/gh/your_organization/your_dataset_repo@main
 
 # 5. S3 / Cloudflare R2 Configuration (Used when STORAGE_BACKEND=s3)
-S3_BUCKET_NAME=savisor-market-data
+S3_BUCKET_NAME=your-market-data-bucket
 S3_ENDPOINT_URL=https://<account_id>.r2.cloudflarestorage.com
-S3_ACCESS_KEY_ID=your_r2_access_key
-S3_SECRET_ACCESS_KEY=your_r2_secret_key
+S3_ACCESS_KEY_ID=your_s3_access_key_id
+S3_SECRET_ACCESS_KEY=your_s3_secret_access_key
 S3_REGION_NAME=auto
-S3_CDN_BASE_URL=https://data.savisor.com
+S3_CDN_BASE_URL=https://data.yourdomain.com
 
 # 6. Audit & Telemetry Configuration ('sqlite' | 'external' | 'both' | 'none')
 AUDIT_LOG_SINK=sqlite
@@ -167,25 +168,27 @@ WINEDEBUG=-all
 
 ---
 
-## 3. Container Operations & Lifecycle
+## 3. Container Operations & Lifecycle (Live Foreground Streaming)
 
-### Quick Start: Building & Launching
+### Quick Start: Building & Launching in Foreground
+
+Run containers in the foreground so you can inspect live stdout/stderr startup streams, Wine status messages, and API events directly:
 
 ```bash
-# Option A: Single-command Docker Compose build and run
-docker compose up -d --build
+# Option A: Single-command Docker Compose (Foreground Live Logs)
+docker compose up --build
 
-# Option B: Two-step Makefile local build
+# Option B: Two-step Makefile Local Build & Run (Foreground Live Logs)
 make build-base
 make build-market-node
-docker run -d --name savisor-market-node \
+docker run -it --rm --name savisor-market-node \
   -p 8000:8000 \
   -p 5900:5900 \
-  -e SAVISOR_API_KEY="savisor_live_secret_key_9812" \
-  -e VNC_PASSWORD="savisorpass" \
+  -e SAVISOR_API_KEY="your_secret_api_key_here" \
+  -e VNC_PASSWORD="your_vnc_password_here" \
   -e STORAGE_BACKEND="github" \
-  -e GITHUB_TOKEN="ghp_yourToken" \
-  -e GITHUB_REPO="devffex/dataset" \
+  -e GITHUB_TOKEN="ghp_yourPersonalAccessTokenHere" \
+  -e GITHUB_REPO="your_organization/your_dataset_repo" \
   -e GITHUB_BRANCH="main" \
   -e AUDIT_LOG_SINK="sqlite" \
   savisor-market-node:latest
@@ -193,51 +196,91 @@ docker run -d --name savisor-market-node \
 
 ### One-Time Broker Authentication via TigerVNC
 
-To log into your broker account inside the containerized MetaTrader 5:
+To authenticate your broker account inside the containerized MetaTrader 5:
 
 ```bash
 # Connect using TigerVNC Viewer CLI
 vncviewer localhost:5900
 ```
-*(Or open the **TigerVNC Viewer** GUI and enter `localhost:5900` or `127.0.0.1:5900`)*
+*(Or launch the **TigerVNC Viewer** GUI and enter `localhost:5900` or `127.0.0.1:5900`)*
 
-1. Enter the password: `savisorpass` (or your configured `VNC_PASSWORD`).
+1. Enter the VNC password (`your_vnc_password_here`).
 2. In MetaTrader 5, navigate to `File -> Login to Trade Account`.
 3. Enter your Broker **Login**, **Password**, and select/type your broker **Server**.
 4. Check **Save password** and click **OK**.
 5. Verify connection status in the bottom right corner (green/blue signal bars).
-6. **Close TigerVNC**: You do **NOT** need to keep VNC open or click on any charts. All further operations are 100% automated by the API.
+6. **Close TigerVNC**: You do **NOT** need to keep VNC open or manually click on charts. All further operations are 100% automated by the API.
 
-### Checking Container Health & Telemetry
+---
 
+## 4. Container Health & Telemetry Probes Explained
+
+The container provides four dedicated diagnostic mechanisms. Here is what each check evaluates in plain English:
+
+### A. Liveness Probe (`GET /health`)
+* **What it asks**: *"Is the FastAPI web server alive, and is the internal Windows gRPC daemon responding over IPC?"*
+* **When to use it**: Used by Kubernetes, Docker health checks, and load balancers to determine if the container process is stuck or crashed and needs an automated reboot.
 ```bash
-# Liveness Probe
 curl -i http://localhost:8000/health
+```
+**Sample Response**:
+```json
+{
+  "status": "ok",
+  "node": "savisor-node",
+  "storage": "GitHubStorageBackend",
+  "daemon": { "status": "ok", "service": "savisor-node-daemon" }
+}
+```
 
-# Readiness Probe
+---
+
+### B. Readiness Probe (`GET /ready`)
+* **What it asks**: *"Is the system fully initialized, connected to the MT5 terminal, and ready to accept incoming trading requests?"*
+* **When to use it**: Used by gateways to ensure traffic is not routed to a node while Wine is booting or while certificates are synchronizing.
+```bash
 curl -i http://localhost:8000/ready
+```
+**Sample Response**: `{"status": "ready"}`
 
-# Prometheus Telemetry Metrics
-curl http://localhost:8000/metrics
+---
 
-# Inspect Live Process Tree inside Container
+### C. Prometheus Metrics Probe (`GET /metrics`)
+* **What it asks**: *"What are the current operational metrics (how many ticks processed, active WebSocket connections, candle rollover counts, backfill execution durations, and Python memory usage)?"*
+* **When to use it**: Scraped every 15–60 seconds by Prometheus / Grafana to generate operational monitoring dashboards and latency alerts.
+```bash
+curl -s http://localhost:8000/metrics | head -n 25
+```
+
+---
+
+### D. Live Process Tree (`docker top`)
+* **What it asks**: *"Are all 6 internal processes (Supervisord, Xvfb virtual screen, x11vnc, Wine server, terminal64.exe, gRPC daemon, and Uvicorn) currently running in RAM?"*
+* **When to use it**: Used by system administrators from the host terminal to verify that MetaTrader 5 or Wine did not exit or get killed by an OOM (Out Of Memory) event without needing to open an SSH shell.
+```bash
 docker top savisor-market-node
 ```
 
 ---
 
-## 4. Asset Discovery & Dynamic Provisioning
+## 5. Asset Discovery & Dynamic Provisioning
 
 ### Discovering Broker Instruments
 
-Query the full broker instrument list with optional group filtering (e.g. `*forex*`, `*crypto*`, `*indices*`, `*commodities*`):
+Query the full broker instrument list:
+* **All Instruments**: `GET /api/v1/symbols/broker` (returns all symbols across all asset classes).
+* **Category Filtering**: `GET /api/v1/symbols/broker?group=*forex*` or `?group=*crypto*` (case-insensitive glob search across broker folder paths like `Forex\EURUSD`).
+
+> [!NOTE]
+> If your terminal has not yet authenticated to a broker, this query will return `{"symbols": []}` because MetaTrader 5 only downloads the broker's asset tree after successful account login.
 
 ```bash
-curl -s -H "X-API-Key: savisor_live_secret_key_9812" \
+# Query all Forex pairs provided by your broker
+curl -s -H "X-API-Key: your_secret_api_key_here" \
   "http://localhost:8000/api/v1/symbols/broker?group=*forex*"
 ```
 
-**Response**:
+**Sample Response**:
 ```json
 {
   "symbols": [
@@ -262,29 +305,19 @@ Provision a symbol into the active Market Watch and automatically queue historic
 
 ```bash
 curl -i -X POST http://localhost:8000/api/v1/symbols/active \
-  -H "X-API-Key: savisor_live_secret_key_9812" \
+  -H "X-API-Key: your_secret_api_key_here" \
   -H "Content-Type: application/json" \
   -d '{
     "symbol": "EURUSD",
     "auto_backfill": true,
-    "candle_count": 5000
+    "candle_count": 10000
   }'
 ```
 
-**Response**:
-```json
-{
-  "symbol": "EURUSD",
-  "success": true,
-  "message": "Symbol EURUSD provisioned and activated.",
-  "backfill_status": "queued"
-}
-```
-
-### Querying the Active Watchlist
+### Querying Active Watchlist
 
 ```bash
-curl -s -H "X-API-Key: savisor_live_secret_key_9812" \
+curl -s -H "X-API-Key: your_secret_api_key_here" \
   http://localhost:8000/api/v1/symbols/active
 ```
 
@@ -292,12 +325,12 @@ curl -s -H "X-API-Key: savisor_live_secret_key_9812" \
 
 ```bash
 curl -i -X DELETE http://localhost:8000/api/v1/symbols/active/EURUSD \
-  -H "X-API-Key: savisor_live_secret_key_9812"
+  -H "X-API-Key: your_secret_api_key_here"
 ```
 
 ---
 
-## 5. Real-Time Streaming & In-Flight Candle 0 Engine
+## 6. Real-Time Streaming & In-Flight Candle 0 Engine
 
 ### What is Candle 0?
 In financial trading, **Candle 0** is the active forming bar for the current unfinished period. The Savisor Candle 0 engine polls ticks every 200ms from the MT5 daemon, maintaining real-time OHLCV states across all timeframes (`M1`, `M5`, `M15`, `M30`, `H1`, `H4`, `D1`, `W1`, `MN1`) in memory.
@@ -308,28 +341,13 @@ When a period boundary passes (e.g. `:00` seconds on M1), the engine finalizes t
 
 ```bash
 # 1. Instant snapshot for specific timeframe (M1)
-curl -s -H "X-API-Key: savisor_live_secret_key_9812" \
+curl -s -H "X-API-Key: your_secret_api_key_here" \
   "http://localhost:8000/api/v1/market/candle0?symbol=EURUSD&timeframe=M1"
-```
-
-**Response**:
-```json
-{
-  "time": 1787779320,
-  "open": 1.16527,
-  "high": 1.16529,
-  "low": 1.16527,
-  "close": 1.16529,
-  "tick_volume": 4,
-  "last_tick_time": 1787779354,
-  "bid": 1.16529,
-  "ask": 1.16530
-}
 ```
 
 ```bash
 # 2. Instant snapshot across ALL 9 timeframes
-curl -s -H "X-API-Key: savisor_live_secret_key_9812" \
+curl -s -H "X-API-Key: your_secret_api_key_here" \
   "http://localhost:8000/api/v1/market/candle0/all?symbol=EURUSD"
 ```
 
@@ -355,7 +373,7 @@ Upon connection acceptance (`websocket.accept()`), the server immediately delive
   }
 }
 ```
-*Compact Array Format*: `[time, open, high, low, close, tick_volume, bid, ask]`
+*Compact Array Schema*: `[time, open, high, low, close, tick_volume, bid, ask]`
 
 #### 2. Live Tick Broadcast Message
 On every new price tick from MT5:
@@ -377,45 +395,75 @@ On every new price tick from MT5:
 
 ---
 
-## 6. Historical Data Ingestion & Backfill Pipeline
+## 7. Full Historical Ingestion & Batch Chunking Pipeline
 
-### On-Demand Deep Historical Backfill
+### Why Chunking is Required for Full History (100,000+ Candles)
+MetaTrader 5 broker terminals cannot safely return 100,000+ candles in a single synchronous RPC call without risking memory exhaustion or network socket deadlines.
 
-Trigger backfilling across custom timeframes and candle depths ($1,000$ to $50,000+$ bars):
+The `BackfillWorker` automatically implements **batch chunking**:
+1. It requests history in sequential chunks of 25,000 bars (`start_pos = 0, 25000, 50000...`).
+2. It continues paginating backwards until the requested candle count is satisfied or the broker reaches the earliest available bar in history.
+3. It combines all chunks, removes duplicate timestamps, sorts ascending by time, compresses into Snappy-encoded Apache Parquet (`history.parquet`) and compact JSON (`recent.json`), commits to GitHub / S3, and purges the jsDelivr edge CDN cache.
+
+---
+
+### Option A: Deep Backfill by Candle Count (100,000+ Candles)
 
 ```bash
 curl -i -X POST http://localhost:8000/api/v1/pipeline/backfill \
-  -H "X-API-Key: savisor_live_secret_key_9812" \
+  -H "X-API-Key: your_secret_api_key_here" \
   -H "Content-Type: application/json" \
   -d '{
     "symbol": "EURUSD",
     "timeframes": ["M1", "M5", "M15", "M30", "H1", "H4", "D1"],
-    "candle_count": 10000
+    "candle_count": 100000
   }'
 ```
 
-### Inspecting Backfill Status
+---
+
+### Option B: Deep Backfill by Multi-Year Date Range (ISO 8601)
+
+Pull an exact historical window (e.g. 5 or 10 years of data) directly into storage:
 
 ```bash
-curl -s -H "X-API-Key: savisor_live_secret_key_9812" \
+curl -i -X POST http://localhost:8000/api/v1/pipeline/backfill \
+  -H "X-API-Key: your_secret_api_key_here" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "symbol": "EURUSD",
+    "timeframes": ["H1", "H4", "D1"],
+    "date_from": "2018-01-01T00:00:00Z",
+    "date_to": "2026-08-26T00:00:00Z"
+  }'
+```
+
+---
+
+### Inspecting Backfill Progress
+
+```bash
+curl -s -H "X-API-Key: your_secret_api_key_here" \
   "http://localhost:8000/api/v1/pipeline/status?symbol=EURUSD"
 ```
 
-**Response**:
+**Sample Status**:
 ```json
 {
   "symbol": "EURUSD",
-  "status": "in_progress",
+  "status": "completed",
   "started_at": 1787768485,
+  "completed_at": 1787768520,
+  "duration_ms": 35000.42,
   "timeframes": {
     "M1": {
-      "candle_count": 5000,
-      "start_time": 1787306520,
+      "candle_count": 100000,
+      "start_time": 1781200000,
       "end_time": 1787779260,
       "parquet_uploaded": true,
       "json_uploaded": true,
-      "parquet_url": "https://cdn.jsdelivr.net/gh/devffex/dataset@main/data/EURUSD/M1/history.parquet",
-      "json_url": "https://cdn.jsdelivr.net/gh/devffex/dataset@main/data/EURUSD/M1/recent.json"
+      "parquet_url": "https://cdn.jsdelivr.net/gh/your_organization/your_dataset_repo@main/data/EURUSD/M1/history.parquet",
+      "json_url": "https://cdn.jsdelivr.net/gh/your_organization/your_dataset_repo@main/data/EURUSD/M1/recent.json"
     }
   }
 }
@@ -423,40 +471,32 @@ curl -s -H "X-API-Key: savisor_live_secret_key_9812" \
 
 ---
 
-## 7. Historical Rates REST Queries
+## 8. Historical Rates REST Queries
 
 Retrieve historical candle arrays directly from the terminal cache via REST:
 
 ### 1. By Bar Count (Recent Bars)
 ```bash
-curl -s -H "X-API-Key: savisor_live_secret_key_9812" \
+curl -s -H "X-API-Key: your_secret_api_key_here" \
   "http://localhost:8000/api/v1/market/rates?symbol=EURUSD&timeframe=H1&count=500"
 ```
-
-**Response**: Array of compact candle tuples:
-```json
-[
-  [1785290400, 1.13851, 1.13866, 1.13822, 1.13859, 5297],
-  [1785294000, 1.13859, 1.13916, 1.13828, 1.13911, 6742]
-]
-```
-*Tuple Schema*: `[timestamp_seconds, open, high, low, close, tick_volume]`
+*Response Schema*: `[[timestamp, open, high, low, close, tick_volume], ...]`
 
 ### 2. By ISO 8601 Date Range
 ```bash
-curl -s -H "X-API-Key: savisor_live_secret_key_9812" \
+curl -s -H "X-API-Key: your_secret_api_key_here" \
   "http://localhost:8000/api/v1/market/rates/range?symbol=EURUSD&timeframe=H1&date_from=2026-01-01T00:00:00Z&date_to=2026-02-01T00:00:00Z"
 ```
 
 ### 3. Forward from Starting Timestamp
 ```bash
-curl -s -H "X-API-Key: savisor_live_secret_key_9812" \
+curl -s -H "X-API-Key: your_secret_api_key_here" \
   "http://localhost:8000/api/v1/market/rates/from?symbol=EURUSD&timeframe=H1&date_from=2026-01-01T00:00:00Z&count=1000"
 ```
 
 ---
 
-## 8. Data Assets, Storage Formats & Multi-CDN Distribution
+## 9. Data Assets, Storage Formats & Multi-CDN Distribution
 
 ### Data Hierarchy in Storage Destination
 
@@ -481,15 +521,7 @@ data/
 ### Schema Specifications
 
 #### 1. `history.parquet` (Apache Parquet Snappy)
-* **Schema**:
-  * `time`: `int64` (Unix epoch timestamp in seconds)
-  * `open`: `float64`
-  * `high`: `float64`
-  * `low`: `float64`
-  * `close`: `float64`
-  * `tick_volume`: `int64`
-  * `spread`: `int32`
-  * `real_volume`: `int64`
+* **Columns**: `time` (`int64`), `open` (`float64`), `high` (`float64`), `low` (`float64`), `close` (`float64`), `tick_volume` (`int64`).
 * **Compression**: Snappy codec with byte-range query support for DuckDB / Polars.
 
 #### 2. `recent.json` (Compact Frontend Array)
@@ -510,37 +542,27 @@ data/
       "candle_count": 5000,
       "start_time": 1787306520,
       "end_time": 1787779260,
-      "parquet_url": "https://cdn.jsdelivr.net/gh/devffex/dataset@main/data/EURUSD/M1/history.parquet",
-      "json_url": "https://cdn.jsdelivr.net/gh/devffex/dataset@main/data/EURUSD/M1/recent.json"
+      "parquet_url": "https://cdn.jsdelivr.net/gh/your_org/dataset@main/data/EURUSD/M1/history.parquet",
+      "json_url": "https://cdn.jsdelivr.net/gh/your_org/dataset@main/data/EURUSD/M1/recent.json"
     }
   }
 }
 ```
 
-### Public jsDelivr Multi-CDN URLs & Instant Purge
-* **Base URL**: `https://cdn.jsdelivr.net/gh/devffex/dataset@main`
-* **Recent JSON**: `https://cdn.jsdelivr.net/gh/devffex/dataset@main/data/EURUSD/H1/recent.json`
-* **Parquet History**: `https://cdn.jsdelivr.net/gh/devffex/dataset@main/data/EURUSD/H1/history.parquet`
-* **Manifest Metadata**: `https://cdn.jsdelivr.net/gh/devffex/dataset@main/data/EURUSD/manifest.json`
-* **Instant Edge Cache Purge API**: Automatically called on candle rollovers:
-  ```text
-  GET https://purge.jsdelivr.net/gh/devffex/dataset@main/data/EURUSD/H1/recent.json
-  ```
-
 ---
 
-## 9. Observability, Logs & Telemetry
+## 10. Observability, Logs & Telemetry
 
 ### 1. MetaTrader 5 Platform Journal Logs (`GET /api/v1/terminal/logs`)
 Inspect raw daily platform journal logs (`YYYYMMDD.log`) written by MT5:
 
 ```bash
 # Tail the latest 50 lines from today's MT5 log file
-curl -s -H "X-API-Key: savisor_live_secret_key_9812" \
+curl -s -H "X-API-Key: your_secret_api_key_here" \
   "http://localhost:8000/api/v1/terminal/logs?lines=50"
 ```
 
-**Response**:
+**Sample Response**:
 ```json
 {
   "file": "20260826.log",
@@ -558,41 +580,13 @@ curl -s -H "X-API-Key: savisor_live_secret_key_9812" \
 Query structured operational event traces recorded with zero latency into SQLite WAL mode:
 
 ```bash
-curl -s -H "X-API-Key: savisor_live_secret_key_9812" \
+curl -s -H "X-API-Key: your_secret_api_key_here" \
   "http://localhost:8000/api/v1/telemetry/traces?symbol=EURUSD&limit=10"
 ```
 
-**Response**:
-```json
-{
-  "sink": "SQLiteAuditSink",
-  "count": 2,
-  "traces": [
-    {
-      "id": "bb741dd8-fd57-4ca7-960f-d33a0568dc62",
-      "timestamp": 1787768485,
-      "trace_id": "f7c21973",
-      "component": "pipeline",
-      "event": "backfill_started",
-      "symbol": "EURUSD",
-      "status": "info",
-      "metadata": { "timeframes": ["M1", "M5", "M15", "M30", "H1", "H4", "D1"], "candle_count": 5000 }
-    }
-  ]
-}
-```
-
-### 3. Prometheus Metrics Scrape (`GET /metrics`)
-The node exports Prometheus metrics for alerting and dashboard monitoring:
-* `savisor_ticks_processed_total{symbol="EURUSD"}`: Tick counter.
-* `savisor_candle0_updates_total{symbol="EURUSD", timeframe="M1"}`: In-flight candle aggregation count.
-* `savisor_candle0_closes_total{symbol="EURUSD", timeframe="M1"}`: Closed candle rollovers.
-* `savisor_active_ws_connections{symbol="EURUSD"}`: Active WebSocket client gauge.
-* `savisor_backfill_duration_seconds_bucket`: Backfill latency histogram.
-
 ---
 
-## 10. Client Integration Recipes
+## 11. Client Integration Recipes
 
 ### A. React / TypeScript + TradingView Lightweight Charts
 ```typescript
@@ -603,7 +597,7 @@ async function initChart(container: HTMLElement, symbol: string = "EURUSD", time
   const series = chart.addCandlestickSeries();
 
   // 1. Fast Warmup from jsDelivr Multi-CDN
-  const cdnUrl = `https://cdn.jsdelivr.net/gh/devffex/dataset@main/data/${symbol}/${timeframe}/recent.json`;
+  const cdnUrl = `https://cdn.jsdelivr.net/gh/your_org/dataset@main/data/${symbol}/${timeframe}/recent.json`;
   const res = await fetch(cdnUrl);
   const rawCandles: [number, number, number, number, number, number][] = await res.json();
   
@@ -631,7 +625,7 @@ import asyncio, json, httpx, websockets
 async def run_bot(symbol: str = "EURUSD", timeframe: str = "M1"):
     # 1. Warmup historical bars from CDN
     async with httpx.AsyncClient() as client:
-        res = await client.get(f"https://cdn.jsdelivr.net/gh/devffex/dataset@main/data/{symbol}/{timeframe}/recent.json")
+        res = await client.get(f"https://cdn.jsdelivr.net/gh/your_org/dataset@main/data/{symbol}/{timeframe}/recent.json")
         candles = res.json()
         print(f"Loaded {len(candles)} historical warmup bars from CDN")
 
@@ -656,7 +650,7 @@ df = duckdb.query("""
         to_timestamp(time) AS timestamp,
         open, high, low, close, tick_volume,
         (close - open) / open * 100 AS return_pct
-    FROM 'https://cdn.jsdelivr.net/gh/devffex/dataset@main/data/EURUSD/H1/history.parquet'
+    FROM 'https://cdn.jsdelivr.net/gh/your_org/dataset@main/data/EURUSD/H1/history.parquet'
     WHERE time >= 1770000000
     ORDER BY time ASC
 """).df()
@@ -666,18 +660,18 @@ print(df.head())
 
 ---
 
-## 11. Complete API Directory
+## 12. Complete API Directory
 
-| Endpoint | Method | Auth | Query Parameters | Description |
+| Endpoint | Method | Auth | Query / Body | Description |
 |---|---|---|---|---|
 | `/health` | `GET` | None | None | Service liveness probe. |
 | `/ready` | `GET` | None | None | Node readiness probe. |
 | `/metrics` | `GET` | None | None | Prometheus telemetry metrics. |
 | `/api/v1/terminal/logs` | `GET` | `X-API-Key` | `lines`, `date` | Retrieve and tail raw MT5 platform logs. |
 | `/api/v1/telemetry/traces` | `GET` | `X-API-Key` | `limit`, `symbol`, `event`, `component` | Query internal SQLite WAL audit traces. |
-| `/api/v1/symbols/broker` | `GET` | `X-API-Key` | `group` | Query broker instrument catalog with wildcard filter. |
+| `/api/v1/symbols/broker` | `GET` | `X-API-Key` | `group` (optional) | Query broker instrument catalog with wildcard filter. |
 | `/api/v1/symbols/active` | `GET` | `X-API-Key` | None | List actively tracked symbols in Market Watch. |
-| `/api/v1/symbols/active` | `POST` | `X-API-Key` | Payload | Provision symbol and optionally trigger auto-backfill. |
+| `/api/v1/symbols/active` | `POST` | `X-API-Key` | `SymbolProvisionRequest` | Provision symbol and optionally trigger auto-backfill. |
 | `/api/v1/symbols/active/{symbol}` | `DELETE` | `X-API-Key` | Path: `symbol` | De-provision symbol from active watchlist. |
 | `/api/v1/market/candle0` | `GET` | `X-API-Key` | `symbol`, `timeframe` | Instant in-flight Candle 0 state. |
 | `/api/v1/market/candle0/all` | `GET` | `X-API-Key` | `symbol` | In-flight Candle 0 states across all timeframes. |
@@ -685,12 +679,12 @@ print(df.head())
 | `/api/v1/market/rates` | `GET` | `X-API-Key` | `symbol`, `timeframe`, `count` | Cached candle array from MT5. |
 | `/api/v1/market/rates/range` | `GET` | `X-API-Key` | `symbol`, `timeframe`, `date_from`, `date_to` | Candle array by ISO date range. |
 | `/api/v1/market/rates/from` | `GET` | `X-API-Key` | `symbol`, `timeframe`, `date_from`, `count` | Candle array from start timestamp. |
-| `/api/v1/pipeline/backfill` | `POST` | `X-API-Key` | Payload | Trigger deep historical backfill across timeframes. |
+| `/api/v1/pipeline/backfill` | `POST` | `X-API-Key` | `BackfillRequest` | Trigger deep historical backfill (chunked or date range). |
 | `/api/v1/pipeline/status` | `GET` | `X-API-Key` | `symbol` | Inspect backfill worker status registry. |
 
 ---
 
-## 12. Local Testing & Development
+## 13. Local Testing & Development
 
 All linting, formatting, and tests are executed using `uv`:
 
