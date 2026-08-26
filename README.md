@@ -42,6 +42,24 @@ graph TD
 
 ---
 
+## MetaTrader 5 Interaction Modes
+
+Savisor supports two distinct engineering approaches for interacting with the MetaTrader 5 instance running inside a container:
+
+### Mode A: Batch / Bulk Ingestion Engine
+* **Best for**: Mass Data Collection, Historical Backfill, ETL, CSV/Parquet Exports, and Disk-Heavy Writes.
+* **High Throughput & Efficiency**: Optimized for volume over immediacy. It fetches large blocks of historical candles (e.g., 50,000 bars) and writes them to SQLite/CSV using bulk transactions (like SQLite WAL mode) to maximize disk I/O efficiency.
+* **Stateless & Resilient**: Can be executed on demand, scheduled via cron/Airflow, or run in parallel per asset symbol without keeping long-running state in memory.
+* **Resource Cleanup**: Starts up, executes the backfill job, flushes to disk, and cleanly exits or prunes temporary resources.
+
+### Mode B: Persistent Event-Driven Daemon (gRPC / Streaming)
+* **Best for**: Autonomous Trading Agents, Live Tick Monitoring, Order Execution, and Sub-second Market Reactions.
+* **Ultra-Low Latency**: Keeps the Docker container, Wine MT5 instance, and gRPC server alive continuously in RAM. Eliminates process startup time and file I/O overhead.
+* **Event-Driven & In-Memory**: Streams live ticks/bars directly to the agent over persistent gRPC or WebSocket channels. Live market state remains in memory (RAM) so the agent can evaluate trading signals and place orders in milliseconds.
+* **Bi-directional Control**: Allows the agent to receive live tick events and immediately push execution commands (`BUY`, `SELL`, `MODIFY_STOP_LOSS`) back through the persistent connection without writing to disk first.
+
+---
+
 ## Directory Layout
 
 ```text

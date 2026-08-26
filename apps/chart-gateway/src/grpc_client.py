@@ -1,26 +1,28 @@
-import os
-import sys
 import json
 import logging
+import os
+import sys
 
 # Ensure the package directory is in sys.path so generated stubs can be imported
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import grpc
+
 import terminal_pb2
 import terminal_pb2_grpc
 
 logger = logging.getLogger("chart_gateway.grpc_client")
 
+
 class TerminalGRPCClient:
     def __init__(self):
         server_address = os.environ.get("MT5_GRPC_SERVER", "127.0.0.1:50051")
         self.api_key = os.environ.get("SAVISOR_API_KEY", "")
-        
+
         logger.info(f"Connecting to MT5 gRPC server at {server_address}...")
         self.channel = grpc.insecure_channel(server_address)
         self.stub = terminal_pb2_grpc.TerminalServiceStub(self.channel)
-        
+
     def _get_metadata(self):
         if self.api_key:
             return [("x-api-key", self.api_key)]
@@ -38,10 +40,7 @@ class TerminalGRPCClient:
     def get_rates_range(self, symbol: str, timeframe: int, date_from: str, date_to: str):
         try:
             req = terminal_pb2.RatesRangeRequest(
-                symbol=symbol,
-                timeframe=timeframe,
-                date_from=date_from,
-                date_to=date_to
+                symbol=symbol, timeframe=timeframe, date_from=date_from, date_to=date_to
             )
             res = self.stub.GetRatesRange(req, metadata=self._get_metadata(), timeout=15)
             return json.loads(res.rates_json)
@@ -51,12 +50,7 @@ class TerminalGRPCClient:
 
     def get_rates_from(self, symbol: str, timeframe: int, date_from: str, count: int):
         try:
-            req = terminal_pb2.RatesFromRequest(
-                symbol=symbol,
-                timeframe=timeframe,
-                date_from=date_from,
-                count=count
-            )
+            req = terminal_pb2.RatesFromRequest(symbol=symbol, timeframe=timeframe, date_from=date_from, count=count)
             res = self.stub.GetRatesFrom(req, metadata=self._get_metadata(), timeout=15)
             return json.loads(res.rates_json)
         except Exception as e:
@@ -65,12 +59,7 @@ class TerminalGRPCClient:
 
     def get_rates_from_pos(self, symbol: str, timeframe: int, start_pos: int, count: int):
         try:
-            req = terminal_pb2.RatesFromPosRequest(
-                symbol=symbol,
-                timeframe=timeframe,
-                start_pos=start_pos,
-                count=count
-            )
+            req = terminal_pb2.RatesFromPosRequest(symbol=symbol, timeframe=timeframe, start_pos=start_pos, count=count)
             res = self.stub.GetRatesFromPos(req, metadata=self._get_metadata(), timeout=15)
             return json.loads(res.rates_json)
         except Exception as e:
@@ -79,10 +68,7 @@ class TerminalGRPCClient:
 
     def select_symbol(self, symbol: str, enable: bool):
         try:
-            req = terminal_pb2.SymbolSelectRequest(
-                symbol=symbol,
-                enable=enable
-            )
+            req = terminal_pb2.SymbolSelectRequest(symbol=symbol, enable=enable)
             res = self.stub.SelectSymbol(req, metadata=self._get_metadata(), timeout=10)
             return res.success
         except Exception as e:

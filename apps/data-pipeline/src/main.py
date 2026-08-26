@@ -14,7 +14,7 @@ def main():
     print("Waiting for MetaTrader 5 terminal to initialize...")
     initialized = False
     for retry in range(15):
-        if mt5.initialize():
+        if mt5.initialize(path="C:\\MetaTrader5\\terminal64.exe", portable=True):
             initialized = True
             break
         print(f"MT5 terminal not ready yet, retrying in 3 seconds... (attempt {retry+1}/15)")

@@ -1,110 +1,86 @@
-# Savisor Chart Analysis Gateway
+# Savisor Autonomous Chart & Data Pipeline Node
 
-The Chart Analysis Gateway is a lightweight, high-performance API server designed to stream financial asset price data from the MetaTrader 5 terminal running under Wine to a TradingView-like React frontend.
-
-It utilizes the **Optimized Pass-Through Caching Pattern** (caching in-memory in FastAPI and React while reading directly from MT5's native broker `.hc` binary files) and the **Compact JSON Array-of-Arrays Data Protocol** to achieve a **55%+ reduction in payload size** with 100% native web compatibility.
+The **Savisor Chart & Data Pipeline Node** is a self-contained, high-performance financial data collection and real-time streaming engine. It runs MetaTrader 5 inside an optimized Wine runtime alongside a FastAPI/WebSocket server and an automated data pipeline worker managed by supervisord.
 
 ---
 
-## 1. Quick Start & Execution
+## 1. Architectural Highlights
 
-### Build the Image
-To build the Docker image natively using `uv` dependency management:
+* **Pluggable Storage Factory (`StorageBackend`)**:
+  * **GitHub Public Repository (`github`)**: 100% free CDN hosting via Git REST API commits, accessible globally via `raw.githubusercontent.com` or Cloudflare proxy.
+  * **S3 / Cloudflare R2 (`s3`)**: High-performance object storage with $0 egress fees (Cloudflare R2) and automatic cache-control headers.
+  * **Local Filesystem (`local`)**: Development staging and offline testing.
+* **Apache Parquet & Compact JSON Exporter**:
+  * Historical candle partitions stored in compressed Apache Parquet (`<symbol>/<timeframe>/history.parquet`) and compact JSON (`<symbol>/<timeframe>/recent.json`).
+* **Real-Time Candle 0 State Engine**:
+  * Accumulates live market ticks in memory into the active forming candle (Candle 0).
+  * Automatically rolls closed candles into historical datasets when period boundaries pass, eliminating data gaps.
+* **Decoupled WebSocket Broadcaster**:
+  * Handles up to 1,000 concurrent client connections over WebSockets with minimal CPU footprint and zero terminal overloading.
+* **Observability & Telemetry**:
+  * Prometheus metrics endpoint (`/metrics`), structured logging, and health/readiness probes (`/health`, `/ready`).
+
+---
+
+## 2. Quick Start
+
+### A. Run with Docker Compose
 ```bash
-make build-chart-gateway
+# Launch container with local storage
+docker compose up -d
+
+# Verify health
+curl -i http://localhost:8000/health
 ```
 
-### Run the Container (Mock MT5 Mode)
-To run the container locally with instant mock data (no active broker connection required):
+### B. Run with GitHub Storage Backend (Free CDN)
 ```bash
-docker rm -f savisor-chart-gateway-run || true && \
-docker run -d --name savisor-chart-gateway-run \
+docker run -d --name savisor-chart-node \
   -p 8000:8000 \
   -p 5900:5900 \
-  -e SAVISOR_API_KEY="test-api-key" \
-  -e VNC_PASSWORD="test-vnc-password" \
-  -e METAFORGE_MOCK_MT5="1" \
+  -e SAVISOR_API_KEY="your-secret-api-key" \
+  -e STORAGE_BACKEND="github" \
+  -e GITHUB_TOKEN="ghp_xxx" \
+  -e GITHUB_REPO="your-org/market-data" \
+  -e GITHUB_BRANCH="main" \
   savisor-chart-gateway:latest
 ```
 
-### Verify Container Health
+---
+
+## 3. API Directory
+
+### Telemetry & Health
+* `GET /health` — Node and daemon liveness probe (Public).
+* `GET /ready` — Node readiness probe (Public).
+* `GET /metrics` — Prometheus metrics scrape endpoint (Public).
+
+### Real-Time Candle 0
+* `GET /api/v1/chart/candle0?symbol=EURUSD&timeframe=M1` — Instant in-flight Candle 0 state.
+* `GET /api/v1/chart/candle0/all?symbol=EURUSD` — Active Candle 0 states across all timeframes.
+* `WS /api/v1/chart/ws/{symbol}` — Real-time WebSocket streaming live ticks and Candle 0 states.
+
+### Data Pipeline & Backfill
+* `POST /api/v1/pipeline/backfill` — Trigger on-demand deep historical backfill across timeframes.
+  * Body: `{"symbol": "EURUSD", "timeframes": ["M1", "M5", "H1", "D1"], "candle_count": 10000}`
+* `GET /api/v1/pipeline/status` — Inspect backfill worker status registry.
+
+### Historical Rates
+* `GET /api/v1/chart/rates?symbol=EURUSD&timeframe=H1&count=500` — Retrieve compact candle array from terminal cache.
+* `GET /api/v1/chart/rates/range` — Retrieve candles by ISO date range.
+* `GET /api/v1/chart/rates/from` — Retrieve candles from starting timestamp.
+
+### Dynamic Symbol Provisioning
+* `GET /api/v1/symbols/active` — List actively tracked assets.
+* `POST /api/v1/symbols/active` — Add/provision symbol and trigger automatic backfill.
+  * Body: `{"symbol": "EURUSD", "auto_backfill": true, "candle_count": 10000}`
+* `DELETE /api/v1/symbols/active/{symbol}` — De-provision symbol.
+
+---
+
+## 4. Testing & Verification
+
+Run the full automated test suite:
 ```bash
-sleep 3 && curl -i http://localhost:8000/health
-```
-
----
-
-## 2. Credentials & Configuration
-
-*   **API Gateway Port**: `8000` (handles REST & WebSockets)
-*   **VNC Display Port**: `5900` (To view the Wine window and MT5 GUI using a VNC Viewer client)
-*   **API Security Header**: `X-API-Key: test-api-key`
-*   **VNC Connection Password**: `test-vnc-password`
-*   **Runtime Mode**: `METAFORGE_MOCK_MT5=1` (Enabled for instant API testing/mock rates. To connect to a live broker account, restart the container without this variable).
-
----
-
-## 3. API Endpoint Directory
-
-### A. Health Check (Public)
-*   **Path**: `GET http://localhost:8000/health`
-*   **Security**: No authentication required.
-*   **Test Command**:
-    ```bash
-    curl -i http://localhost:8000/health
-    ```
-
-### B. Fetch Historical Rates (Compact JSON)
-*   **Path**: `GET http://localhost:8000/api/v1/chart/rates`
-*   **Security**: Requires `X-API-Key: test-api-key` header.
-*   **Query Parameters**:
-    *   `symbol` (required): Asset ticker (e.g. `EURUSD`)
-    *   `timeframe` (optional): `M1`, `M5`, `M15`, `H1`, `H4`, `D1` (default: `H1`)
-    *   `count` (optional): Number of candles to return, up to 10000 (default: `500`)
-    *   `start_pos` (optional): Starting candle index (default: `0`, representing the active candle)
-*   **Test Command**:
-    ```bash
-    curl -i -H "X-API-Key: test-api-key" "http://localhost:8000/api/v1/chart/rates?symbol=EURUSD&timeframe=M5&count=5"
-    ```
-*   **Sample Response**:
-    `[[1774329200, 1.0824, 1.083, 1.082, 1.0828, 150], ...]` *(Format: `[[time, open, high, low, close, volume], ...]`)*
-
----
-
-### C. Active Symbols Management (Dynamic Provisioning)
-Allows the React frontend to add or remove assets tracked by the container.
-
-*   **List Active Pairs**: `GET http://localhost:8000/api/v1/symbols/active`
-    ```bash
-    curl -i -H "X-API-Key: test-api-key" "http://localhost:8000/api/v1/symbols/active"
-    ```
-*   **Add/Provision Pair**: `POST http://localhost:8000/api/v1/symbols/active`
-    *   *Body*: `{"symbol": "EURUSD"}`
-    ```bash
-    curl -i -X POST -H "X-API-Key: test-api-key" -H "Content-Type: application/json" -d '{"symbol": "EURUSD"}' "http://localhost:8000/api/v1/symbols/active"
-    ```
-*   **Remove/Deprovision Pair**: `DELETE http://localhost:8000/api/v1/symbols/active/{symbol}`
-    ```bash
-    curl -i -X DELETE -H "X-API-Key: test-api-key" "http://localhost:8000/api/v1/symbols/active/EURUSD"
-    ```
-
----
-
-### D. WebSockets Real-Time Tick Stream
-*   **Path**: `ws://localhost:8000/api/v1/chart/ws/{symbol}`
-*   **Authentication**: Bypassed for connection handshake simplicity.
-*   **Test Command** (requires `wscat`):
-    ```bash
-    wscat -c ws://localhost:8000/api/v1/chart/ws/EURUSD
-    ```
-*   **Sample Tick Stream Frame**:
-    `[1774329205, 1.0825, 1.0827, 1.0826, 15]` *(Format: `[time, bid, ask, last, volume]`)*
-
----
-
-## 4. Container Logs Audit
-
-To check uvicorn transactions, gRPC connections, and Wine events inside the container:
-```bash
-docker logs savisor-chart-gateway-run
+PYTHONPATH=apps/chart-gateway uv run --project apps/chart-gateway pytest apps/chart-gateway/tests -v
 ```

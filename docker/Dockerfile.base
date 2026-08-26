@@ -152,6 +152,14 @@ RUN --mount=type=bind,from=python-builder,source=/tmp/wheels,target=/home/wine/.
     rm -rf /tmp/.wine-1000 && \
     # Insulate prefix by deleting container root traversal symlink
     rm -f /home/wine/.wine/dosdevices/z: && \
+    # Disable LiveUpdate by blocking its directory in both the installation path and AppData
+    rm -rf /home/wine/.wine/drive_c/MetaTrader5/liveupdate && \
+    touch /home/wine/.wine/drive_c/MetaTrader5/liveupdate && \
+    chmod 444 /home/wine/.wine/drive_c/MetaTrader5/liveupdate && \
+    mkdir -p /home/wine/.wine/drive_c/users/wine/AppData/Roaming/MetaQuotes/Terminal/BF9336D047DCCACD9080FDBCE04D3DE5 && \
+    rm -rf /home/wine/.wine/drive_c/users/wine/AppData/Roaming/MetaQuotes/Terminal/BF9336D047DCCACD9080FDBCE04D3DE5/liveupdate && \
+    touch /home/wine/.wine/drive_c/users/wine/AppData/Roaming/MetaQuotes/Terminal/BF9336D047DCCACD9080FDBCE04D3DE5/liveupdate && \
+    chmod 444 /home/wine/.wine/drive_c/users/wine/AppData/Roaming/MetaQuotes/Terminal/BF9336D047DCCACD9080FDBCE04D3DE5/liveupdate && \
     # Create files preservation list regex and prune unused DLLs from system and prefix
     KEEP_FILES="explorer.exe services.exe winedevice.exe plugplay.exe svchost.exe rpcss.exe \
                 hidclass.sys hidparse.sys mountmgr.sys ndis.sys nsiproxy.sys winebth.sys winebus.sys winehid.sys wineusb.sys \

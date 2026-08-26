@@ -265,12 +265,44 @@ except ImportError:
 
     mt5 = MockMT5()
 
-# Reentrant lock to serialize all operations that talk to the MT5 Windows API
-mt5_lock = threading.Lock()
+class SafeMT5Lock:
+    def __init__(self):
+        self._lock = threading.Lock()
+
+    def acquire(self, blocking=True, timeout=-1):
+        return self._lock.acquire(blocking, timeout)
+
+    def release(self):
+        self._lock.release()
+
+    def __enter__(self):
+        acquired = self._lock.acquire(timeout=10.0)
+        if not acquired:
+            raise RuntimeError("MT5 terminal lock timeout - terminal is busy or unresponsive")
+        return True
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        try:
+            self._lock.release()
+        except RuntimeError:
+            pass
+
+# Safe lock wrapper to serialize all operations that talk to the MT5 Windows API
+mt5_lock = SafeMT5Lock()
 
 
-# Helper to serialize MT5 namedtuples to JSON-compatible dicts
+# Helper to serialize MT5 namedtuples and numpy objects to JSON-compatible types
 def _serialize_mt5(obj):
+    if hasattr(obj, "dtype"):
+        if getattr(obj.dtype, "names", None) is not None:
+            names = obj.dtype.names
+            return [{name: _serialize_mt5(row[name]) for name in names} for row in obj]
+        elif hasattr(obj, "tolist"):
+            val = obj.tolist()
+            if isinstance(val, list):
+                return [_serialize_mt5(i) for i in val]
+            return val
+
     if hasattr(obj, "_asdict"):
         d = obj._asdict()
         return {k: _serialize_mt5(v) for k, v in d.items()}
@@ -331,16 +363,29 @@ class APIKeyAuthInterceptor(grpc.ServerInterceptor):
         return grpc.unary_unary_rpc_method_handler(abort)
 
 
+_last_init_attempt = 0.0
+_init_cooldown = 10.0  # seconds
+
+
 class TerminalServiceServicer(terminal_pb2_grpc.TerminalServiceServicer):
     def _ensure_initialized_and_auth(self, context, bypass_auth=False):
+        global _last_init_attempt
         # On-demand initialization
         info = mt5.terminal_info()
         if info is None:
+            now = time.time()
+            if now - _last_init_attempt < _init_cooldown:
+                context.abort(
+                    grpc.StatusCode.UNAVAILABLE,
+                    "MT5 terminal connection is offline (cooldown active, please retry later)"
+                )
+
             logger.info("Initializing MT5 terminal on-demand...")
-            if not mt5.initialize(path="C:\\MetaTrader5\\terminal64.exe", portable=True):
+            _last_init_attempt = now
+            if not mt5.initialize(path="C:\\MetaTrader5\\terminal64.exe", portable=True, timeout=5000):
                 err = mt5.last_error()
                 context.abort(
-                    grpc.StatusCode.INTERNAL, f"MT5 initialization failed: {err}"
+                    grpc.StatusCode.UNAVAILABLE, f"MT5 initialization failed: {err}"
                 )
 
         # Verification: terminals must be authenticated for data/trade endpoints
@@ -901,7 +946,7 @@ def serve(port: int = 50051):
         logger.warning("SAVISOR_API_KEY environment variable not set. API Key authentication is DISABLED.")
 
     server = grpc.server(
-        concurrent.futures.ThreadPoolExecutor(max_workers=10),
+        concurrent.futures.ThreadPoolExecutor(max_workers=1),
         interceptors=interceptors
     )
     terminal_pb2_grpc.add_TerminalServiceServicer_to_server(
