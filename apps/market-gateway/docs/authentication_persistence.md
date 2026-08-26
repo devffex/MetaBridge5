@@ -362,10 +362,89 @@ docker stop savisor-node-icmarkets savisor-node-ftmo
 
 ---
 
-## 7. Why This Architecture Is Optimal
+---
+
+## 7. Improvement & Testing Loop (Zero Re-Authentication Updates)
+
+During active development and bug-fixing cycles (e.g. implementing 5–10 code fixes, new feature endpoints, or performance tweaks), you need to redeploy and test changes rapidly.
+
+Because your broker login, encrypted credentials, and Wine cryptographic registry keys live on the persistent Docker named volume (`savisor_mt5_data`), **re-authentication and TigerVNC are NEVER required when updating the code**.
+
+When you modify the codebase, you only need to rebuild the application image, recreate the container, and reattach it to the existing volume.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Dev as Engineer / Agent
+    participant Code as Codebase (/apps/market-gateway/src)
+    participant Image as Docker Image (savisor-market-node:latest)
+    participant Cont as Docker Container (savisor-market-node)
+    participant Vol as Persistent Volume (savisor_mt5_data)
+
+    Dev->>Code: Apply fixes / new features
+    Dev->>Image: Rebuild image (make build-market-node)
+    Dev->>Cont: Remove old container (docker rm -f)
+    Dev->>Cont: Run new container with volume & .env attached
+    Cont->>Vol: Reattach to /home/wine/.wine
+    Note over Cont,Vol: 100% authenticated to broker instantly!
+    Dev->>Cont: Run test verifications
+```
+
+---
+
+### The 3-Step Update Process
+
+#### Step 1: Rebuild the Application Image
+Rebuild the gateway image to bake in your new code (Docker layer caching ensures this completes in 1–3 seconds):
+```bash
+make build-market-node
+```
+
+#### Step 2: Stop and Remove the Old Container
+Stop and delete the running container instance:
+```bash
+docker rm -f savisor-market-node
+```
+*Note: Removing the container only removes the temporary container execution layer. The named volume `savisor_mt5_data` and your session files remain completely untouched.*
+
+#### Step 3: Run the New Container Attached to the Volume
+Start the new container mounting the existing volume and loading your `.env` file:
+```bash
+docker run -d --name savisor-market-node \
+  -p 8000:8000 \
+  -p 5900:5900 \
+  -v savisor_mt5_data:/home/wine/.wine \
+  --env-file /home/julio/Work/savisor/savisor-node/apps/market-gateway/.env \
+  savisor-market-node:latest
+```
+
+---
+
+### Single-Command Quick Update Shortcut
+You can chain all 3 steps into a single copy-paste command to deploy and verify code changes in under 5 seconds:
+
+```bash
+make build-market-node && \
+docker rm -f savisor-market-node && \
+docker run -d --name savisor-market-node \
+  -p 8000:8000 \
+  -p 5900:5900 \
+  -v savisor_mt5_data:/home/wine/.wine \
+  --env-file /home/julio/Work/savisor/savisor-node/apps/market-gateway/.env \
+  savisor-market-node:latest
+```
+
+### Result
+The new container boots with your updated code, attaches to `savisor_mt5_data`, detects the existing session, and connects to the broker **100% authenticated immediately with zero downtime or manual login required**.
+
+---
+
+## 8. Why This Architecture Is Optimal
 
 1. **Zero Credential Collisions**: Each broker's encrypted DPAPI session lives on its own volume without overwriting other brokers.
 2. **Instant Hot-Swapping**: Switching brokers takes less than 3 seconds (stopping the container and starting with another volume).
-3. **Independent Caching & Backfilling**: Historical Parquet files, broker spreads, and symbol catalogs remain completely isolated.
-4. **Cross-Machine Portability**: Exporting the volume allows instant deployment across new cloud instances without re-authenticating.
-5. **Resilient Multi-Feed Strategy**: Trading bots can connect to `ws://localhost:8001/api/v1/market/ws/EURUSD` (IC Markets) and `ws://localhost:8002/api/v1/market/ws/EURUSD` (FTMO) simultaneously for multi-broker spread monitoring and arbitrage.
+3. **Frictionless Development Loops**: Rebuilding and updating the container preserves 100% of broker credentials and chart history without VNC.
+4. **Independent Caching & Backfilling**: Historical Parquet files, broker spreads, and symbol catalogs remain completely isolated.
+5. **Cross-Machine Portability**: Exporting the volume allows instant deployment across new cloud instances without re-authenticating.
+6. **Resilient Multi-Feed Strategy**: Trading bots can connect to `ws://localhost:8001/api/v1/market/ws/EURUSD` (IC Markets) and `ws://localhost:8002/api/v1/market/ws/EURUSD` (FTMO) simultaneously for multi-broker spread monitoring and arbitrage.
+

@@ -217,6 +217,7 @@ Explore the modular technical manuals in the `docs/` folder:
 
 ## 6. Testing & Development
 
+### Local Validation
 ```bash
 # 1. Sync virtual environment
 uv sync --project apps/market-gateway --all-groups
@@ -228,3 +229,18 @@ uv run --project apps/market-gateway ruff format apps/market-gateway/src apps/ma
 # 3. Run unit tests
 PYTHONPATH=apps/market-gateway uv run --project apps/market-gateway pytest apps/market-gateway/tests -v
 ```
+
+### Rapid Development & Improvement Loop (Zero Re-Authentication)
+When applying code changes, fixes, or new endpoints, redeploy the running container in under 5 seconds without losing session authentication:
+
+```bash
+make build-market-node && \
+docker rm -f savisor-market-node && \
+docker run -d --name savisor-market-node \
+  -p 8000:8000 \
+  -p 5900:5900 \
+  -v savisor_mt5_data:/home/wine/.wine \
+  --env-file /home/julio/Work/savisor/savisor-node/apps/market-gateway/.env \
+  savisor-market-node:latest
+```
+
