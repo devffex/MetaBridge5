@@ -30,32 +30,43 @@ The **Savisor Market Data & Pipeline Node** is a self-contained, high-performanc
 
 ---
 
-## 2. Quick Start
+## 2. Quick Start & Local Build
 
+> [!IMPORTANT]
+> The Docker image must be built locally from the monorepo root directory (it is not hosted on public Docker Hub).
 
-### A. Run with Docker Compose
+### Option A: Using Docker Compose (Recommended)
+From the repository root:
 ```bash
-# Launch container with local storage
-docker compose up -d
+# Build and start container in one command:
+docker compose up -d --build
 
-# Verify health
-curl -i http://localhost:8000/health
+# Follow logs:
+docker compose logs -f
 ```
 
-### B. Run with GitHub + jsDelivr Multi-CDN Backend
+### Option B: Using Makefile & Docker Run
+From the repository root:
 ```bash
+# 1. Build images
+make build-base
+make build-market-node
+
+# 2. Run container
 docker run -d --name savisor-market-node \
   -p 8000:8000 \
   -p 5900:5900 \
-  -e SAVISOR_API_KEY="your-secret-api-key" \
+  -e SAVISOR_API_KEY="savisor_live_secret_key_9812" \
+  -e VNC_PASSWORD="savisorpass" \
   -e STORAGE_BACKEND="github" \
-  -e GITHUB_TOKEN="ghp_xxx" \
+  -e GITHUB_TOKEN="ghp_yourGitHubPersonalAccessToken" \
   -e GITHUB_REPO="devffex/dataset" \
   -e GITHUB_BRANCH="main" \
   -e GITHUB_CDN_BASE_URL="https://cdn.jsdelivr.net/gh/devffex/dataset@main" \
   -e AUDIT_LOG_SINK="sqlite" \
   savisor-market-node:latest
 ```
+
 
 ---
 

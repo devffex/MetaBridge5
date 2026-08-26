@@ -110,18 +110,48 @@ savisor-monorepo/
 3. Clean up cache files to avoid connection conflicts: delete `MetaTrader5/Config/terminal.lic` and `MetaTrader5/Config/accounts.dat`.
 4. Copy the entire `C:\MetaTrader5` folder to this project's root as `MetaTrader5/`.
 
-### 2. Orchestration & Builds
+### 2. Building & Running the Docker Images Locally
 
-Build targets are managed using the root-level [Makefile](file:///home/julio/Work/savisor/savisor-node/Makefile):
+> [!IMPORTANT]
+> **Build Locally First (Avoid "pull access denied")**:
+> The `savisor-market-node:latest` image is built locally within this monorepo and is **not published on public Docker Hub**.
+> If you run `docker run savisor-market-node:latest` before building, Docker will attempt to pull the image from Docker Hub and fail with `pull access denied`.
+>
+> You must build the images locally from the **monorepo root directory** using one of the two options below:
 
+#### Option 1: Using the Makefile (Two-Step Local Build - Recommended)
+Run these commands from the monorepo root:
 ```bash
-# Build the base Wine/MT5 image (required first)
+# Step 1: Build the shared Wine + MT5 base image first
 make build-base
 
-# Build individual standalone targets
+# Step 2: Build the standalone market node image
 make build-market-node
-make build-pipeline
-make build-bot
+
+# Step 3: Run the market node container
+docker run -d --name savisor-market-node \
+  -p 8000:8000 \
+  -p 5900:5900 \
+  -e SAVISOR_API_KEY="savisor_live_secret_key_9812" \
+  -e VNC_PASSWORD="savisorpass" \
+  -e STORAGE_BACKEND="github" \
+  -e GITHUB_TOKEN="ghp_yourGitHubPersonalAccessToken" \
+  -e GITHUB_REPO="devffex/dataset" \
+  -e GITHUB_BRANCH="main" \
+  -e GITHUB_CDN_BASE_URL="https://cdn.jsdelivr.net/gh/devffex/dataset@main" \
+  -e AUDIT_LOG_SINK="sqlite" \
+  savisor-market-node:latest
+```
+
+#### Option 2: Using Docker Compose (Simplest Single-Command Build & Run)
+Ensure `apps/market-gateway/.env` is configured, then from the monorepo root run:
+```bash
+# Automatically builds and starts the container in one command:
+docker compose up -d --build
+
+# Follow live container logs:
+docker compose logs -f
+```
 
 ---
 
