@@ -107,13 +107,48 @@ async def test_candle0_api(client):
     assert res_chart.status_code == 200
 
 
-def test_pipeline_status(client):
+def test_pipeline_status_and_pause_resume(client):
+    # Check default status
     res = client.get(
         "/api/v1/pipeline/status",
         headers={"X-API-Key": "test_key_123"},
     )
     assert res.status_code == 200
-    assert isinstance(res.json(), dict)
+    data = res.json()
+    assert "paused" in data
+    assert data["paused"] is False
+
+    # Pause pipeline
+    res_pause = client.post(
+        "/api/v1/pipeline/pause",
+        headers={"X-API-Key": "test_key_123"},
+    )
+    assert res_pause.status_code == 200
+    assert res_pause.json()["status"] == "paused"
+    assert res_pause.json()["paused"] is True
+
+    # Check status is now paused
+    res_status_paused = client.get(
+        "/api/v1/pipeline/status",
+        headers={"X-API-Key": "test_key_123"},
+    )
+    assert res_status_paused.json()["paused"] is True
+
+    # Resume pipeline
+    res_resume = client.post(
+        "/api/v1/pipeline/resume",
+        headers={"X-API-Key": "test_key_123"},
+    )
+    assert res_resume.status_code == 200
+    assert res_resume.json()["status"] == "active"
+    assert res_resume.json()["paused"] is False
+
+    # Check status is active
+    res_status_active = client.get(
+        "/api/v1/pipeline/status",
+        headers={"X-API-Key": "test_key_123"},
+    )
+    assert res_status_active.json()["paused"] is False
 
 
 def test_terminal_logs_endpoint(client, tmp_path):

@@ -63,7 +63,18 @@ class BackfillWorker:
         self._sync_locks: dict[str, asyncio.Lock] = {}
         self._master_lock = asyncio.Lock()
         self.status_registry: dict[str, Any] = {}
+        self.is_paused: bool = False
         logger.info(f"Initialized BackfillWorker with storage: {type(storage_backend).__name__}")
+
+    def pause(self):
+        """Pauses historical data extraction and storage pushes."""
+        self.is_paused = True
+        logger.warning("Pipeline ingestion and storage pushes PAUSED")
+
+    def resume(self):
+        """Resumes historical data extraction and storage pushes."""
+        self.is_paused = False
+        logger.info("Pipeline ingestion and storage pushes RESUMED")
 
     async def _get_symbol_lock(self, symbol: str) -> asyncio.Lock:
         async with self._master_lock:
@@ -86,6 +97,16 @@ class BackfillWorker:
         """
         symbol = symbol.upper()
         tfs = timeframes or self.timeframes
+
+        if self.is_paused:
+            logger.warning(f"Pipeline is currently paused. Skipping backfill for {symbol}")
+            return {
+                "symbol": symbol,
+                "status": "paused",
+                "message": "Pipeline ingestion is paused. Resume pipeline to execute backfills.",
+                "timeframes": tfs,
+            }
+
         lock = await self._get_symbol_lock(symbol)
         start_time_sec = time.time()
 
@@ -245,6 +266,11 @@ class BackfillWorker:
         """
         symbol = symbol.upper()
         timeframe = timeframe.upper()
+
+        if self.is_paused:
+            logger.debug(f"Pipeline is currently paused. Skipping closed candle rollup for {symbol} {timeframe}")
+            return
+
         lock = await self._get_symbol_lock(symbol)
         start_time_sec = time.time()
 

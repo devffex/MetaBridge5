@@ -319,14 +319,49 @@ async def trigger_backfill(
     }
 
 
+@app.post("/api/v1/pipeline/pause", dependencies=[Depends(verify_api_key)])
+def pause_pipeline():
+    """Pauses historical data extraction and storage pushes on demand."""
+    if not backfill_worker:
+        raise HTTPException(status_code=500, detail="Backfill worker uninitialized")
+    backfill_worker.pause()
+    return {
+        "status": "paused",
+        "paused": True,
+        "message": "Pipeline data extraction and storage push have been paused.",
+    }
+
+
+@app.post("/api/v1/pipeline/resume", dependencies=[Depends(verify_api_key)])
+def resume_pipeline():
+    """Resumes historical data extraction and storage pushes."""
+    if not backfill_worker:
+        raise HTTPException(status_code=500, detail="Backfill worker uninitialized")
+    backfill_worker.resume()
+    return {
+        "status": "active",
+        "paused": False,
+        "message": "Pipeline data extraction and storage push have been resumed.",
+    }
+
+
 @app.get("/api/v1/pipeline/status", dependencies=[Depends(verify_api_key)])
 def get_pipeline_status(symbol: str | None = Query(None)):
-    """Inspects backfill worker status registry."""
+    """Inspects backfill worker status registry and active pause state."""
     if not backfill_worker:
         raise HTTPException(status_code=500, detail="Backfill worker uninitialized")
     if symbol:
-        return backfill_worker.status_registry.get(symbol.upper(), {"status": "not_found"})
-    return backfill_worker.status_registry
+        symbol_status = backfill_worker.status_registry.get(symbol.upper(), {"status": "not_found"})
+        return {
+            "symbol": symbol.upper(),
+            "paused": backfill_worker.is_paused,
+            "status": symbol_status,
+        }
+    return {
+        "paused": backfill_worker.is_paused,
+        "registry": backfill_worker.status_registry,
+    }
+
 
 
 # ---------------------------------------------------------

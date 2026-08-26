@@ -34,7 +34,9 @@ X-API-Key: your_secret_api_key_here
 | `/api/v1/market/rates/range` | `GET` | Yes | `symbol`, `timeframe`, `date_from`, `date_to` | Retrieve candle array by ISO 8601 date range. |
 | `/api/v1/market/rates/from` | `GET` | Yes | `symbol`, `timeframe`, `date_from`, `count` | Retrieve candle array starting from timestamp. |
 | `/api/v1/pipeline/backfill` | `POST` | Yes | `BackfillRequest` | Trigger deep historical backfill (chunked or date range). |
-| `/api/v1/pipeline/status` | `GET` | Yes | `symbol` (optional) | Inspect backfill worker status registry. |
+| `/api/v1/pipeline/status` | `GET` | Yes | `symbol` (optional) | Inspect backfill worker status registry & active pause state. |
+| `/api/v1/pipeline/pause` | `POST` | Yes | None | Pauses historical data extraction and storage push. |
+| `/api/v1/pipeline/resume` | `POST` | Yes | None | Resumes historical data extraction and storage push. |
 
 ---
 
