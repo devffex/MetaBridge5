@@ -147,13 +147,13 @@ sequenceDiagram
 
 ---
 
-### The Critical Technical Requirement: What You Must Archive
+#### The Critical Technical Requirement: What You Must Archive
 
 > [!IMPORTANT]
-> **Do NOT zip the `MetaTrader5` folder from a host Windows machine!**
-> You must archive the authenticated **Docker volume directory** created inside the Wine container environment.
+> **Capture the Entire Wine Prefix & Cryptographic Salts**:
+> You must archive the entire `/home/wine/.wine` directory (which contains `drive_c/MetaTrader5` **plus** the Wine registry files `system.reg` and `user.reg`).
 > 
-> When you archive the Docker volume (`/home/wine/.wine/drive_c/MetaTrader5`), all internal session tokens, server lists, and relative Wine directory paths are captured. When extracted into a new volume on Machine B, the new container mounts the exact same structure and connects immediately.
+> Because MetaTrader 5 encrypts login tokens using the `MachineGuid` stored in `system.reg`, capturing the full Wine prefix guarantees that when restored on Machine B, the cryptographic environment matches 100% and MT5 decrypts your credentials instantly without throwing security deletion errors.
 
 ---
 
@@ -169,14 +169,18 @@ sequenceDiagram
 
 ### Step-by-Step Export and Restore Procedure
 
-#### Step 1: Export & Compress the Volume on Machine A (Source Machine)
-Run this command on your original machine to package the volume into a compressed archive in your current directory:
+#### Step 1: Export from the Running Container on Machine A (Source Machine)
+Run these commands on your original machine while `savisor-market-node` is running:
 
 ```bash
-docker run --rm \
-  -v savisor_mt5_data:/from_volume \
-  -v $(pwd):/backup \
-  alpine tar -czvf /backup/savisor_mt5_session.tar.gz -C /from_volume .
+# 1. Create the compressed archive inside the container
+docker exec savisor-market-node tar -czf /tmp/savisor_mt5_session.tar.gz -C /home/wine/.wine .
+
+# 2. Copy the archive to your current host directory
+docker cp savisor-market-node:/tmp/savisor_mt5_session.tar.gz ./savisor_mt5_session.tar.gz
+
+# 3. Clean up the temporary archive inside the container
+docker exec savisor-market-node rm -f /tmp/savisor_mt5_session.tar.gz
 ```
 
 ---
@@ -190,14 +194,14 @@ Upload `savisor_mt5_session.tar.gz` to your **private repository** or private cl
 On your destination machine or cloud server:
 
 ```bash
-# 1. Create the new named volume on Machine B
+# 1. Create the named volume on Machine B
 docker volume create savisor_mt5_data
 
 # 2. Extract the archive into the new volume
 docker run --rm \
   -v savisor_mt5_data:/to_volume \
   -v $(pwd):/backup \
-  alpine tar -xzvf /backup/savisor_mt5_session.tar.gz -C /to_volume
+  alpine tar -xzf /backup/savisor_mt5_session.tar.gz -C /to_volume
 ```
 
 ---
@@ -208,13 +212,14 @@ docker run --rm \
 docker run -it --rm --name savisor-market-node \
   -p 8000:8000 \
   -p 5900:5900 \
-  -v savisor_mt5_data:/home/wine/.wine/drive_c/MetaTrader5 \
+  -v savisor_mt5_data:/home/wine/.wine \
   --env-file .env \
   savisor-market-node:latest
 ```
 
 ### Result
-The container on Machine B mounts the restored volume, detects the authenticated session, and **boots 100% connected to your broker with zero manual VNC viewer interaction or password entry**.
+The container on Machine B mounts the restored volume at `/home/wine/.wine`, detects the identical cryptographic session, and **boots 100% connected to your broker with zero manual VNC viewer interaction or password entry required**.
+
 
 ---
 
