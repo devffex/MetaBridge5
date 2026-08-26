@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+from pathlib import Path
 
 from cachetools import TTLCache
 from fastapi import (
@@ -202,6 +203,53 @@ def query_telemetry_traces(
         "count": len(records),
         "traces": records,
     }
+
+
+@app.get("/api/v1/terminal/logs", dependencies=[Depends(verify_api_key)])
+def get_terminal_logs(
+    lines: int = Query(100, ge=1, le=2000, description="Number of recent log lines to retrieve"),
+    date: str | None = Query(None, description="Optional log date formatted as YYYYMMDD (default: latest)"),
+):
+    """
+    Retrieves and tails raw MetaTrader 5 daily platform journal logs.
+    """
+    log_dir = Path("/home/wine/.wine/drive_c/MetaTrader5/logs")
+    if not log_dir.exists():
+        log_dir = Path("MetaTrader5/logs")
+
+    if not log_dir.exists():
+        return {"logs": [], "message": "MetaTrader 5 log directory not found"}
+
+    if date:
+        target_file = log_dir / f"{date}.log"
+        if not target_file.exists():
+            raise HTTPException(status_code=404, detail=f"Log file for date {date} not found")
+        files = [target_file]
+    else:
+        files = sorted(log_dir.glob("*.log"), key=lambda f: f.stat().st_mtime, reverse=True)
+
+    if not files:
+        return {"logs": [], "message": "No log files available"}
+
+    latest_file = files[0]
+    try:
+        with open(latest_file, "rb") as f:
+            raw = f.read()
+        try:
+            content = raw.decode("utf-16-le")
+        except UnicodeDecodeError:
+            content = raw.decode("utf-8", errors="replace")
+
+        log_lines = [line.strip() for line in content.splitlines() if line.strip()]
+        tailed_lines = log_lines[-lines:] if len(log_lines) > lines else log_lines
+        return {
+            "file": latest_file.name,
+            "total_lines": len(log_lines),
+            "returned_lines": len(tailed_lines),
+            "lines": tailed_lines,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error reading log file {latest_file.name}: {e!s}")
 
 
 # ---------------------------------------------------------
@@ -502,18 +550,20 @@ async def poll_ticks_loop(symbol: str):
                                         await ws.send_json(payload)
                                     except Exception:
                                         dead_ws.add(ws)
-                                    if dead_ws:
-                                        websockets.difference_update(dead_ws)
-                                        WS_CONNECTIONS_GAUGE.labels(symbol=symbol).set(len(websockets))
+                                if dead_ws:
+                                    websockets.difference_update(dead_ws)
+                                    WS_CONNECTIONS_GAUGE.labels(symbol=symbol).set(len(websockets))
 
             except asyncio.CancelledError:
-                break
+                raise
             except Exception as e:
                 logger.error(f"Error in tick polling loop for {symbol}: {e}")
 
             # 200ms sleep for high-frequency sub-second tick tracking
             await asyncio.sleep(0.20)
 
+    except asyncio.CancelledError:
+        pass
     finally:
         logger.info(f"Stopped background tick poll loop for {symbol}.")
 
@@ -530,6 +580,25 @@ async def websocket_endpoint(websocket: WebSocket, symbol: str):
     symbol_subscriptions[symbol].add(websocket)
     WS_CONNECTIONS_GAUGE.labels(symbol=symbol).set(len(symbol_subscriptions[symbol]))
 
+    # Deliver immediate in-memory snapshot of Candle 0 states upon connection
+    if candle_manager:
+        initial_states = {}
+        for tf in candle_manager.supported_timeframes:
+            st = candle_manager.get_candle0(symbol, tf)
+            if st:
+                initial_states[tf] = st.to_compact_array()
+        if initial_states:
+            try:
+                await websocket.send_json(
+                    {
+                        "type": "snapshot",
+                        "symbol": symbol,
+                        "candle0": initial_states,
+                    }
+                )
+            except Exception as e:
+                logger.warning(f"Failed to send initial snapshot to WebSocket client for {symbol}: {e}")
+
     if symbol not in active_poll_tasks:
         task = asyncio.create_task(poll_ticks_loop(symbol))
         active_poll_tasks[symbol] = task
@@ -540,14 +609,14 @@ async def websocket_endpoint(websocket: WebSocket, symbol: str):
             data = await websocket.receive_text()
             logger.debug(f"Received client message on {symbol}: {data}")
 
-    except WebSocketDisconnect:
+    except (WebSocketDisconnect, Exception):
         logger.info(f"WebSocket client disconnected for symbol: {symbol}")
     finally:
         if symbol in symbol_subscriptions:
             symbol_subscriptions[symbol].discard(websocket)
             WS_CONNECTIONS_GAUGE.labels(symbol=symbol).set(len(symbol_subscriptions[symbol]))
             if not symbol_subscriptions[symbol]:
-                symbol_subscriptions.pop(symbol)
+                symbol_subscriptions.pop(symbol, None)
                 task = active_poll_tasks.pop(symbol, None)
                 if task:
                     task.cancel()

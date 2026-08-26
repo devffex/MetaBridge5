@@ -91,7 +91,6 @@ def test_github_storage_backend(mock_client_class):
     )
 
 
-
 @patch("boto3.client")
 def test_s3_storage_backend(mock_boto_client):
     mock_s3 = MagicMock()

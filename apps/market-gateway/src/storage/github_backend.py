@@ -44,10 +44,8 @@ class GitHubStorageBackend(StorageBackend):
             self.headers["Authorization"] = f"Bearer {self.token}"
 
         logger.info(
-            f"Initialized GitHubStorageBackend for repo '{self.repo}' branch '{self.branch}' "
-            f"(CDN: {self.cdn_base_url})"
+            f"Initialized GitHubStorageBackend for repo '{self.repo}' branch '{self.branch}' (CDN: {self.cdn_base_url})"
         )
-
 
     def _get_file_sha(self, remote_path: str) -> str | None:
         """Fetches the current blob SHA of an existing file in GitHub."""
@@ -115,7 +113,6 @@ class GitHubStorageBackend(StorageBackend):
                     logger.warning(f"jsDelivr cache purge returned {res.status_code} for {clean_path}")
         except Exception as e:
             logger.warning(f"Could not purge jsDelivr cache for {clean_path}: {e}")
-
 
     def upload_file(
         self,

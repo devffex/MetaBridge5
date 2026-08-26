@@ -945,10 +945,16 @@ def serve(port: int = 50051):
     else:
         logger.warning("SAVISOR_API_KEY environment variable not set. API Key authentication is DISABLED.")
 
+    options = [
+        ("grpc.max_send_message_length", 64 * 1024 * 1024),
+        ("grpc.max_receive_message_length", 64 * 1024 * 1024),
+    ]
     server = grpc.server(
         concurrent.futures.ThreadPoolExecutor(max_workers=1),
-        interceptors=interceptors
+        interceptors=interceptors,
+        options=options,
     )
+
     terminal_pb2_grpc.add_TerminalServiceServicer_to_server(
         TerminalServiceServicer(), server
     )
