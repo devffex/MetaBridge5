@@ -1,4 +1,4 @@
-.PHONY: build-base build-gateway build-pipeline build-bot build-all run-gateway run-pipeline run-bot
+.PHONY: build-base build-gateway build-pipeline build-bot build-market-node build-all run-gateway run-pipeline run-bot run-market-node
 
 # ==============================================================================
 # Docker Build Orchestration Targets
@@ -17,12 +17,14 @@ build-pipeline:
 build-bot:
 	docker build -f apps/trading-bot/Dockerfile -t savisor-bot:latest .
 
-# 4. Build the standalone Chart Analysis Gateway container
-build-chart-gateway:
-	docker build -f apps/chart-gateway/Dockerfile -t savisor-chart-gateway:latest .
+# 4. Build the standalone Market Data & Pipeline Node container
+build-market-node:
+	docker build -f apps/market-gateway/Dockerfile -t savisor-market-node:latest .
+
+build-market-gateway: build-market-node
 
 # 5. Build all targets sequentially
-build-all: build-base build-pipeline build-bot build-chart-gateway
+build-all: build-base build-pipeline build-bot build-market-node
 
 # ==============================================================================
 # Standalone Container Running Targets (Local Testing)
@@ -54,12 +56,16 @@ run-bot:
 		-e VNC_PASSWORD="test-vnc-password" \
 		savisor-bot:latest
 
-# Run the Chart Gateway locally with API port 8000 and VNC port 5900 exposed
-run-chart-gateway:
+# Run the Market Data Node locally with API port 8000 and VNC port 5900 exposed
+run-market-node:
 	docker run -it --rm \
-		--name savisor-chart-gateway-run \
+		--name savisor-market-node-run \
 		-p 8000:8000 \
 		-p 5900:5900 \
 		-e SAVISOR_API_KEY="test-api-key" \
 		-e VNC_PASSWORD="test-vnc-password" \
-		savisor-chart-gateway:latest
+		-e STORAGE_BACKEND="local" \
+		-e AUDIT_LOG_SINK="sqlite" \
+		savisor-market-node:latest
+
+run-market-gateway: run-market-node

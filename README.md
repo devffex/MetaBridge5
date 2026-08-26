@@ -18,17 +18,17 @@ graph TD
     end
 
     subgraph Targets ["Standalone Deployment Targets"]
-        BaseImage -->|FROM| DockerfileAPI["apps/gateway/Dockerfile"]
+        BaseImage -->|FROM| DockerfileAPI["apps/market-gateway/Dockerfile"]
         BaseImage -->|FROM| DockerfilePipe["apps/data-pipeline/Dockerfile"]
         BaseImage -->|FROM| DockerfileBot["apps/trading-bot/Dockerfile"]
         
-        DockerfileAPI -->|docker build| ImageAPI(("savisor-gateway:latest")):::gateway
+        DockerfileAPI -->|docker build| ImageAPI(("savisor-market-node:latest")):::gateway
         DockerfilePipe -->|docker build| ImagePipe(("savisor-pipeline:latest")):::pipeline
         DockerfileBot -->|docker build| ImageBot(("savisor-bot:latest")):::bot
     end
 
     subgraph Runtime ["Individual Standalone Runs"]
-        ImageAPI -->|Run Standalone| ContainerAPI["REST API Node<br/>(Exposes Port 8000 & 5900)"]:::gateway
+        ImageAPI -->|Run Standalone| ContainerAPI["Market Data & Pipeline Node<br/>(Exposes Port 8000 & 5900)"]:::gateway
         ImagePipe -->|Run Standalone| ContainerPipe["Data Pipeline Ingest Node<br/>(One-shot Run & Exit)"]:::pipeline
         ImageBot -->|Run Standalone| ContainerBot["Trading Bot Node<br/>(Persistent execution loop)"]:::bot
     end
@@ -37,7 +37,7 @@ graph TD
 ### Key Concepts
 
 * **Shared Base Image (`savisor-base`)**: Handles all heavy layers—Wine emulation, X Virtual Framebuffer (Xvfb), virtual display configuration, VNC setups, certificate synchronization, MetaTrader 5 terminal installations, and a Windows Python environment loaded with core packages (`numpy`, `pandas`, `MetaTrader5`).
-* **Standalone Deployment targets**: Child Dockerfiles inherit `FROM savisor-base` and only inject their specific codebase, supervisord service parameters, and package requirements (e.g. `fastapi` in the Gateway, or machine learning libraries in the Bot).
+* **Standalone Deployment targets**: Child Dockerfiles inherit `FROM savisor-base` and only inject their specific codebase, supervisord service parameters, and package requirements (e.g. `fastapi` in the Market Gateway, or machine learning libraries in the Bot).
 * **Supervisord Inclusion**: The base image provides `/etc/supervisord.conf` with core virtualization layers. Child Dockerfiles mount their specific configuration under `/etc/supervisor/conf.d/*.conf` to start their specific Python scripts.
 
 ---
@@ -69,7 +69,6 @@ Savisor supports two distinct engineering approaches for interacting with the Me
 
 ## Directory Layout
 
-
 ```text
 savisor-monorepo/
 ├── docker/
@@ -79,8 +78,9 @@ savisor-monorepo/
 │   └── Dockerfile.base          # Heavy Wine + MT5 + Python base image
 │
 ├── apps/
-│   ├── gateway/                 # REST API Gateway target
-│   │   ├── api/                 # FastAPI code and tests
+│   ├── market-gateway/          # Real-time Market Feed & Pipeline Node
+│   │   ├── src/                 # Engine (Candle 0), Pipeline (Backfill/Parquet), Storage, Telemetry
+│   │   ├── tests/               # 12-Perspective Unit Test Suite
 │   │   ├── supervisord.conf     # Runs FastAPI uvicorn server
 │   │   └── Dockerfile           
 │   │
@@ -95,6 +95,7 @@ savisor-monorepo/
 │       └── Dockerfile           
 │
 ├── MetaTrader5/                 # Portable MT5 binary (host-supplied)
+├── docker-compose.yml           # Production Docker Compose orchestration
 ├── Makefile                     # Build & run automations
 └── README.md
 ```
@@ -118,7 +119,7 @@ Build targets are managed using the root-level [Makefile](file:///home/julio/Wor
 make build-base
 
 # Build individual standalone targets
-make build-gateway
+make build-market-node
 make build-pipeline
 make build-bot
 
@@ -126,28 +127,11 @@ make build-bot
 make build-all
 ```
 
-### 3. Local Testing
-
-To spin up and test individual standalone containers, use the Makefile runner targets. Secrets (`SAVISOR_API_KEY` and `VNC_PASSWORD`) are pre-injected automatically for quick checks:
-
-```bash
-# Run the API Gateway (port 8000 and VNC 5900 exposed)
-make run-gateway
-
-# Run the Ingest Pipeline (will execute data fetch and shut down container)
-make run-pipeline
-
-# Run the Trading Bot (will start tick monitor loop)
-make run-bot
-```
-
----
-
 ---
 
 ## Running Locally with GitHub Storage & SQLite Database
 
-You can run the **Savisor Autonomous Node** locally with:
+You can run the **Savisor Market Data Node** locally with:
 - **Storage Target**: **GitHub Public/Private Repository** (for free versioned storage and global CDN access via `raw.githubusercontent.com`).
 - **Telemetry & Audit Database**: **Internal SQLite in WAL mode** (zero-overhead microsecond audit logging inside `/home/wine/data/traces.sqlite3`).
 
@@ -188,7 +172,7 @@ docker compose logs -f
 
 #### Option B: Using Direct Docker Run
 ```bash
-docker run -d --name savisor-node \
+docker run -d --name savisor-market-node \
   -p 8000:8000 \
   -p 5900:5900 \
   -e SAVISOR_API_KEY="dev_savisor_secret_key_123" \
@@ -199,7 +183,7 @@ docker run -d --name savisor-node \
   -e GITHUB_BRANCH="main" \
   -e AUDIT_LOG_SINK="sqlite" \
   -e METAFORGE_MOCK_MT5="1" \
-  savisor-chart-gateway:latest
+  savisor-market-node:latest
 ```
 
 ---
@@ -250,27 +234,26 @@ curl -i -H "X-API-Key: dev_savisor_secret_key_123" \
 ```bash
 # Instant in-flight Candle 0 snapshot (M1 timeframe)
 curl -i -H "X-API-Key: dev_savisor_secret_key_123" \
-  "http://localhost:8000/api/v1/chart/candle0?symbol=EURUSD&timeframe=M1"
+  "http://localhost:8000/api/v1/market/candle0?symbol=EURUSD&timeframe=M1"
 
 # Connect to WebSocket stream (using wscat or frontend chart)
-wscat -c ws://localhost:8000/api/v1/chart/ws/EURUSD
+wscat -c ws://localhost:8000/api/v1/market/ws/EURUSD
 ```
 
 ---
 
 ## Local Development & Unit Tests
 
-API logic, tests, and formatting are managed using `uv` inside the chart-gateway app directory:
+API logic, tests, and formatting are managed using `uv` inside the market-gateway app directory:
 
 ```bash
 # Sync local virtual environment with all dependency groups
-uv sync --project apps/chart-gateway --all-groups
+uv sync --project apps/market-gateway --all-groups
 
 # Run linter and formatter checks
-uv run --project apps/chart-gateway ruff check apps/chart-gateway/src apps/chart-gateway/tests
-uv run --project apps/chart-gateway ruff format apps/chart-gateway/src apps/chart-gateway/tests
+uv run --project apps/market-gateway ruff check apps/market-gateway/src apps/market-gateway/tests
+uv run --project apps/market-gateway ruff format apps/market-gateway/src apps/market-gateway/tests
 
 # Run the 12-Perspective Unit Test Suite (28 tests)
-PYTHONPATH=apps/chart-gateway uv run --project apps/chart-gateway pytest apps/chart-gateway/tests -v
+PYTHONPATH=apps/market-gateway uv run --project apps/market-gateway pytest apps/market-gateway/tests -v
 ```
-

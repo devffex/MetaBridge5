@@ -34,7 +34,7 @@ from app.telemetry.factory import AuditLoggerFactory
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] [%(name)s]: %(message)s")
-logger = logging.getLogger("chart_gateway")
+logger = logging.getLogger("market_gateway")
 
 # Prometheus Metrics
 TICKS_PROCESSED_TOTAL = Counter("savisor_ticks_processed_total", "Total ticks processed", ["symbol"])
@@ -123,7 +123,7 @@ async def lifespan(app: FastAPI):
     candle_manager.register_close_callback(backfill_worker.handle_candle_close)
     if audit_sink:
         audit_sink.record(AuditRecord(component="gateway", event="node_started", status="info"))
-    logger.info("Savisor Autonomous Chart Node started successfully.")
+    logger.info("Savisor Market Data Node started successfully.")
     yield
     # Shutdown logic
     for symbol, task in active_poll_tasks.items():
@@ -134,15 +134,16 @@ async def lifespan(app: FastAPI):
     if audit_sink:
         audit_sink.record(AuditRecord(component="gateway", event="node_stopped", status="info"))
         audit_sink.close()
-    logger.info("Savisor Autonomous Chart Node stopped.")
+    logger.info("Savisor Market Data Node stopped.")
 
 
 app = FastAPI(
-    title="Savisor Autonomous Chart Node",
-    description="Autonomous data pipeline, real-time Candle 0 engine, and storage distribution node for MetaTrader 5",
+    title="Savisor Market Data Node",
+    description="Autonomous real-time market data feed, Candle 0 engine, and historical data pipeline for MetaTrader 5",
     version="2.0.0",
     lifespan=lifespan,
 )
+
 
 # Enable CORS for frontend integration
 app.add_middleware(
@@ -206,7 +207,8 @@ def query_telemetry_traces(
 # ---------------------------------------------------------
 # Real-Time Candle 0 Endpoints
 # ---------------------------------------------------------
-@app.get("/api/v1/chart/candle0", dependencies=[Depends(verify_api_key)])
+@app.get("/api/v1/market/candle0", dependencies=[Depends(verify_api_key)])
+@app.get("/api/v1/chart/candle0", dependencies=[Depends(verify_api_key)], include_in_schema=False)
 def get_candle0_snapshot(
     symbol: str = Query(..., description="Symbol e.g. EURUSD"),
     timeframe: str = Query("M1", description="Timeframe e.g. M1, M5, H1"),
@@ -222,7 +224,8 @@ def get_candle0_snapshot(
     return state.to_dict()
 
 
-@app.get("/api/v1/chart/candle0/all", dependencies=[Depends(verify_api_key)])
+@app.get("/api/v1/market/candle0/all", dependencies=[Depends(verify_api_key)])
+@app.get("/api/v1/chart/candle0/all", dependencies=[Depends(verify_api_key)], include_in_schema=False)
 def get_all_candle0_snapshots(
     symbol: str = Query(..., description="Symbol e.g. EURUSD"),
 ):
@@ -275,7 +278,8 @@ def get_pipeline_status(symbol: str | None = Query(None)):
 # ---------------------------------------------------------
 # Historical Rates (Candles from MT5 Cache)
 # ---------------------------------------------------------
-@app.get("/api/v1/chart/rates", dependencies=[Depends(verify_api_key)])
+@app.get("/api/v1/market/rates", dependencies=[Depends(verify_api_key)])
+@app.get("/api/v1/chart/rates", dependencies=[Depends(verify_api_key)], include_in_schema=False)
 async def get_chart_rates(
     symbol: str = Query(..., description="Financial asset symbol e.g., EURUSD"),
     timeframe: str = Query("H1", description="Timeframe e.g. M1, M5, H1, D1"),
@@ -310,7 +314,8 @@ async def get_chart_rates(
             raise HTTPException(status_code=500, detail=f"Failed to fetch rates from terminal: {e!s}")
 
 
-@app.get("/api/v1/chart/rates/range", dependencies=[Depends(verify_api_key)])
+@app.get("/api/v1/market/rates/range", dependencies=[Depends(verify_api_key)])
+@app.get("/api/v1/chart/rates/range", dependencies=[Depends(verify_api_key)], include_in_schema=False)
 def get_chart_rates_range(
     symbol: str = Query(..., description="Financial asset symbol e.g., EURUSD"),
     timeframe: str = Query("H1", description="Timeframe e.g. M1, M5, H1, D1"),
@@ -338,7 +343,8 @@ def get_chart_rates_range(
         raise HTTPException(status_code=500, detail=f"Failed to fetch rates range from terminal: {e!s}")
 
 
-@app.get("/api/v1/chart/rates/from", dependencies=[Depends(verify_api_key)])
+@app.get("/api/v1/market/rates/from", dependencies=[Depends(verify_api_key)])
+@app.get("/api/v1/chart/rates/from", dependencies=[Depends(verify_api_key)], include_in_schema=False)
 def get_chart_rates_from(
     symbol: str = Query(..., description="Financial asset symbol e.g., EURUSD"),
     timeframe: str = Query("H1", description="Timeframe e.g. M1, M5, H1, D1"),
@@ -496,9 +502,9 @@ async def poll_ticks_loop(symbol: str):
                                         await ws.send_json(payload)
                                     except Exception:
                                         dead_ws.add(ws)
-                                if dead_ws:
-                                    websockets.difference_update(dead_ws)
-                                    WS_CONNECTIONS_GAUGE.labels(symbol=symbol).set(len(websockets))
+                                    if dead_ws:
+                                        websockets.difference_update(dead_ws)
+                                        WS_CONNECTIONS_GAUGE.labels(symbol=symbol).set(len(websockets))
 
             except asyncio.CancelledError:
                 break
@@ -512,6 +518,7 @@ async def poll_ticks_loop(symbol: str):
         logger.info(f"Stopped background tick poll loop for {symbol}.")
 
 
+@app.websocket("/api/v1/market/ws/{symbol}")
 @app.websocket("/api/v1/chart/ws/{symbol}")
 async def websocket_endpoint(websocket: WebSocket, symbol: str):
     symbol = symbol.upper()

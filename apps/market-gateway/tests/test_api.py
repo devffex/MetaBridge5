@@ -52,21 +52,25 @@ def test_ready_endpoint(client):
 
 def test_api_key_auth(client):
     # Without header -> 401
-    res = client.get("/api/v1/chart/rates?symbol=EURUSD&timeframe=H1")
+    res = client.get("/api/v1/market/rates?symbol=EURUSD&timeframe=H1")
     assert res.status_code == 401
 
     # With invalid header -> 401
-    res = client.get("/api/v1/chart/rates?symbol=EURUSD&timeframe=H1", headers={"X-API-Key": "wrong"})
+    res = client.get("/api/v1/market/rates?symbol=EURUSD&timeframe=H1", headers={"X-API-Key": "wrong"})
     assert res.status_code == 401
 
-    # With valid header -> 200
-    res = client.get("/api/v1/chart/rates?symbol=EURUSD&timeframe=H1", headers={"X-API-Key": "test_key_123"})
+    # With valid header on /api/v1/market/rates -> 200
+    res = client.get("/api/v1/market/rates?symbol=EURUSD&timeframe=H1", headers={"X-API-Key": "test_key_123"})
     assert res.status_code == 200
     data = res.json()
     assert isinstance(data, list)
     assert len(data) == 2
     # Compact candle format: [time, open, high, low, close, volume]
     assert data[0] == [1700000000, 1.0800, 1.0850, 1.0790, 1.0845, 100]
+
+    # Backward compatibility: /api/v1/chart/rates also returns 200
+    res_chart = client.get("/api/v1/chart/rates?symbol=EURUSD&timeframe=H1", headers={"X-API-Key": "test_key_123"})
+    assert res_chart.status_code == 200
 
 
 @pytest.mark.asyncio
@@ -76,7 +80,7 @@ async def test_candle0_api(client):
     await main_mod.candle_manager.process_tick("EURUSD", tick)
 
     res = client.get(
-        "/api/v1/chart/candle0?symbol=EURUSD&timeframe=M1",
+        "/api/v1/market/candle0?symbol=EURUSD&timeframe=M1",
         headers={"X-API-Key": "test_key_123"},
     )
     assert res.status_code == 200
@@ -85,13 +89,20 @@ async def test_candle0_api(client):
     assert data["close"] == 1.0851
     assert data["tick_volume"] == 15
 
-    # Test candle0 all
+    # Test market candle0 all
     res_all = client.get(
-        "/api/v1/chart/candle0/all?symbol=EURUSD",
+        "/api/v1/market/candle0/all?symbol=EURUSD",
         headers={"X-API-Key": "test_key_123"},
     )
     assert res_all.status_code == 200
     assert "M1" in res_all.json()
+
+    # Backward compatibility: /api/v1/chart/candle0 also returns 200
+    res_chart = client.get(
+        "/api/v1/chart/candle0?symbol=EURUSD&timeframe=M1",
+        headers={"X-API-Key": "test_key_123"},
+    )
+    assert res_chart.status_code == 200
 
 
 def test_pipeline_status(client):

@@ -1,15 +1,15 @@
 version: "3.8"
 
 services:
-  savisor-node:
+  market-node:
     build:
       context: .
-      dockerfile: apps/chart-gateway/Dockerfile
-    image: savisor-chart-node:latest
-    container_name: savisor-node
+      dockerfile: apps/market-gateway/Dockerfile
+    image: savisor-market-node:latest
+    container_name: savisor-market-node
     restart: unless-stopped
     ports:
-      - "8000:8000"   # Chart Gateway REST, WebSockets & Prometheus Telemetry (/metrics)
+      - "8000:8000"   # Market Gateway REST, WebSockets & Prometheus Telemetry (/metrics)
       - "5900:5900"   # VNC Remote Desktop (MetaTrader 5 visual setup/auth)
     environment:
       - SAVISOR_API_KEY=${SAVISOR_API_KEY:-dev_savisor_secret_key_123}
@@ -31,6 +31,11 @@ services:
       - S3_SECRET_ACCESS_KEY=${S3_SECRET_ACCESS_KEY:-}
       - S3_CDN_BASE_URL=${S3_CDN_BASE_URL:-}
       
+      # Telemetry & Audit Logging Strategy: 'sqlite' | 'external' | 'both' | 'none'
+      - AUDIT_LOG_SINK=${AUDIT_LOG_SINK:-sqlite}
+      - AUDIT_EXTERNAL_ENDPOINT=${AUDIT_EXTERNAL_ENDPOINT:-}
+      - AUDIT_EXTERNAL_API_KEY=${AUDIT_EXTERNAL_API_KEY:-}
+
       # Timezone & Wine Overrides
       - TZ=UTC
       - WINEDEBUG=-all

@@ -11,7 +11,7 @@ import grpc
 import terminal_pb2
 import terminal_pb2_grpc
 
-logger = logging.getLogger("chart_gateway.grpc_client")
+logger = logging.getLogger("market_gateway.grpc_client")
 
 
 class TerminalGRPCClient:

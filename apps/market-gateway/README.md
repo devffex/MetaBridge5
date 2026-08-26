@@ -1,6 +1,6 @@
-# Savisor Autonomous Chart & Data Pipeline Node
+# Savisor Market Data & Pipeline Node
 
-The **Savisor Chart & Data Pipeline Node** is a self-contained, high-performance financial data collection and real-time streaming engine. It runs MetaTrader 5 inside an optimized Wine runtime alongside a FastAPI/WebSocket server and an automated data pipeline worker managed by supervisord.
+The **Savisor Market Data & Pipeline Node** is a self-contained, high-performance financial data collection, real-time streaming, and historical ingestion engine. It runs MetaTrader 5 inside an optimized Wine runtime alongside a FastAPI/WebSocket server and an automated data pipeline worker managed by supervisord.
 
 ---
 
@@ -18,7 +18,7 @@ The **Savisor Chart & Data Pipeline Node** is a self-contained, high-performance
 * **Decoupled WebSocket Broadcaster**:
   * Handles up to 1,000 concurrent client connections over WebSockets with minimal CPU footprint and zero terminal overloading.
 * **Observability & Telemetry**:
-  * Prometheus metrics endpoint (`/metrics`), structured logging, and health/readiness probes (`/health`, `/ready`).
+  * Dual audit logging factory (Internal SQLite in WAL mode + Remote External DB Sink), Prometheus metrics (`/metrics`), structured logging, and health/readiness probes (`/health`, `/ready`).
 
 ---
 
@@ -35,7 +35,7 @@ curl -i http://localhost:8000/health
 
 ### B. Run with GitHub Storage Backend (Free CDN)
 ```bash
-docker run -d --name savisor-chart-node \
+docker run -d --name savisor-market-node \
   -p 8000:8000 \
   -p 5900:5900 \
   -e SAVISOR_API_KEY="your-secret-api-key" \
@@ -43,7 +43,8 @@ docker run -d --name savisor-chart-node \
   -e GITHUB_TOKEN="ghp_xxx" \
   -e GITHUB_REPO="your-org/market-data" \
   -e GITHUB_BRANCH="main" \
-  savisor-chart-gateway:latest
+  -e AUDIT_LOG_SINK="sqlite" \
+  savisor-market-node:latest
 ```
 
 ---
@@ -54,11 +55,14 @@ docker run -d --name savisor-chart-node \
 * `GET /health` — Node and daemon liveness probe (Public).
 * `GET /ready` — Node readiness probe (Public).
 * `GET /metrics` — Prometheus metrics scrape endpoint (Public).
+* `GET /api/v1/telemetry/traces` — Query internal SQLite WAL audit logs.
 
-### Real-Time Candle 0
-* `GET /api/v1/chart/candle0?symbol=EURUSD&timeframe=M1` — Instant in-flight Candle 0 state.
-* `GET /api/v1/chart/candle0/all?symbol=EURUSD` — Active Candle 0 states across all timeframes.
-* `WS /api/v1/chart/ws/{symbol}` — Real-time WebSocket streaming live ticks and Candle 0 states.
+### Real-Time Market Feed & Candle 0
+* `GET /api/v1/market/candle0?symbol=EURUSD&timeframe=M1` — Instant in-flight Candle 0 state.
+* `GET /api/v1/market/candle0/all?symbol=EURUSD` — Active Candle 0 states across all timeframes.
+* `WS /api/v1/market/ws/{symbol}` — Real-time WebSocket streaming live ticks and Candle 0 states.
+
+*(Legacy `/api/v1/chart/...` routes are supported as backward-compatible aliases)*
 
 ### Data Pipeline & Backfill
 * `POST /api/v1/pipeline/backfill` — Trigger on-demand deep historical backfill across timeframes.
@@ -66,9 +70,9 @@ docker run -d --name savisor-chart-node \
 * `GET /api/v1/pipeline/status` — Inspect backfill worker status registry.
 
 ### Historical Rates
-* `GET /api/v1/chart/rates?symbol=EURUSD&timeframe=H1&count=500` — Retrieve compact candle array from terminal cache.
-* `GET /api/v1/chart/rates/range` — Retrieve candles by ISO date range.
-* `GET /api/v1/chart/rates/from` — Retrieve candles from starting timestamp.
+* `GET /api/v1/market/rates?symbol=EURUSD&timeframe=H1&count=500` — Retrieve compact candle array from terminal cache.
+* `GET /api/v1/market/rates/range` — Retrieve candles by ISO date range.
+* `GET /api/v1/market/rates/from` — Retrieve candles from starting timestamp.
 
 ### Dynamic Symbol Provisioning
 * `GET /api/v1/symbols/active` — List actively tracked assets.
@@ -78,13 +82,11 @@ docker run -d --name savisor-chart-node \
 
 ---
 
----
-
 ## 4. Testing & Verification
 
 Run the full automated test suite:
 ```bash
-PYTHONPATH=apps/chart-gateway uv run --project apps/chart-gateway pytest apps/chart-gateway/tests -v
+PYTHONPATH=apps/market-gateway uv run --project apps/market-gateway pytest apps/market-gateway/tests -v
 ```
 
 ---
@@ -93,4 +95,3 @@ PYTHONPATH=apps/chart-gateway uv run --project apps/chart-gateway pytest apps/ch
 
 For complete client integration examples (TradingView Lightweight Charts in React/TypeScript, Python Trading Bots with indicator warmup, DuckDB / Polars ML pipelines, and full REST/WS schema specs), see:
 👉 **[Client API & Integration Guide](../../docs/client_api.md)**
-

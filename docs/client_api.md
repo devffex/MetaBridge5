@@ -1,6 +1,6 @@
 # Savisor Client API & Integration Guide
 
-The **Savisor Autonomous Node** provides a high-performance **Hybrid CDN + WebSocket Architecture** designed to support external applications—such as web charting frontends (TradingView / Lightweight Charts), algorithmic trading bots, quantitative machine learning pipelines, and mobile apps—with ultra-low latency and zero cloud egress cost.
+The **Savisor Market Data Node** provides a high-performance **Hybrid CDN + WebSocket Architecture** designed to support external applications—such as web charting frontends (TradingView / Lightweight Charts), algorithmic trading bots, quantitative machine learning pipelines, and mobile apps—with ultra-low latency and zero cloud egress cost.
 
 ---
 
@@ -19,7 +19,7 @@ sequenceDiagram
     CDN-->>Client: Returns static candles 1..N (Instant, Cached, $0 Cost)
 
     Note over Client,NodeWS: Phase 2: Live Real-Time Streaming
-    Client->>NodeWS: Connect ws://node:8000/api/v1/chart/ws/{symbol}
+    Client->>NodeWS: Connect ws://node:8000/api/v1/market/ws/{symbol}
     NodeWS-->>Client: Handshake OK
     loop Every incoming market tick (200ms)
         NodeWS-->>Client: Push Live Tick + Active Candle 0 [time, open, high, low, close, vol, bid, ask]
@@ -74,7 +74,7 @@ export async function initChart(container: HTMLElement, symbol = 'EURUSD', timef
   candleSeries.setData(formattedCandles);
 
   // 3. Connect to Real-Time WebSocket for Live Candle 0 Updates
-  const ws = new WebSocket(`ws://localhost:8000/api/v1/chart/ws/${symbol}`);
+  const ws = new WebSocket(`ws://localhost:8000/api/v1/market/ws/${symbol}`);
 
   ws.onmessage = (event) => {
     const data: Candle0Payload = JSON.parse(event.data);
@@ -111,7 +111,7 @@ import websockets
 import pandas as pd
 
 CDN_BASE_URL = "https://raw.githubusercontent.com/your-org/market-data/main"
-NODE_WS_URL = "ws://localhost:8000/api/v1/chart/ws"
+NODE_WS_URL = "ws://localhost:8000/api/v1/market/ws"
 
 async def run_trading_agent(symbol="EURUSD", timeframe="M5"):
     # 1. Warm up indicators using historical Parquet dataset from CDN
@@ -186,10 +186,10 @@ X-API-Key: dev_savisor_secret_key_123
 
 ---
 
-### A. Real-Time Candle 0 Endpoints
+### A. Real-Time Market Feed & Candle 0 Endpoints
 
-#### `GET /api/v1/chart/candle0`
-Returns the instantaneous in-flight Candle 0 state for a single timeframe.
+#### `GET /api/v1/market/candle0`
+Returns the instantaneous in-flight Candle 0 state for a single timeframe. *(Alias: `/api/v1/chart/candle0`)*
 
 * **Query Parameters**:
   * `symbol` (string, required): e.g. `EURUSD`
@@ -210,8 +210,8 @@ Returns the instantaneous in-flight Candle 0 state for a single timeframe.
   }
   ```
 
-#### `GET /api/v1/chart/candle0/all`
-Returns active Candle 0 states across all supported timeframes (`M1` through `MN1`).
+#### `GET /api/v1/market/candle0/all`
+Returns active Candle 0 states across all supported timeframes (`M1` through `MN1`). *(Alias: `/api/v1/chart/candle0/all`)*
 
 * **Query Parameters**: `symbol` (string, required)
 * **Response (200 OK)**:
@@ -225,9 +225,9 @@ Returns active Candle 0 states across all supported timeframes (`M1` through `MN
 
 ---
 
-### B. WebSocket Live Stream (`WS /api/v1/chart/ws/{symbol}`)
+### B. WebSocket Live Stream (`WS /api/v1/market/ws/{symbol}`)
 
-* **Endpoint**: `ws://{host}:8000/api/v1/chart/ws/{symbol}`
+* **Endpoint**: `ws://{host}:8000/api/v1/market/ws/{symbol}` *(Alias: `/api/v1/chart/ws/{symbol}`)*
 * **Protocol**: Real-time JSON broadcast pushed on price ticks (de-duplicated at 200ms).
 * **Payload Schema**:
   ```json

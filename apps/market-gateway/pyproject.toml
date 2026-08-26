@@ -1,8 +1,9 @@
 [project]
-name = "savisor-chart-gateway"
-version = "0.1.0"
-description = "High-performance pass-through charting gateway for TradingView"
+name = "savisor-market-gateway"
+version = "0.2.0"
+description = "High-performance real-time market data feed, Candle 0 engine, and historical data pipeline"
 readme = "README.md"
+
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.110.0",
