@@ -188,14 +188,31 @@ docker run -it --rm --name savisor-market-node \
 
 ---
 
-## 4. Container Health & Telemetry Probes
+## 4. Container Health, Observability & Ingestion Controls
 
-| Probe | Command | Plain-English Purpose |
+### System Probes & Diagnostics
+| Probe / Diagnostic | Command | Plain-English Purpose |
 |---|---|---|
 | **Liveness Probe** | `curl -i http://localhost:8000/health` | Asks *"Is the API process alive and is the internal MT5 gRPC bridge responding?"* |
 | **Readiness Probe** | `curl -i http://localhost:8000/ready` | Asks *"Is the system ready to accept trading traffic and are connections initialized?"* |
+| **Pipeline Health Monitor** | `curl -s -H "X-API-Key: ..." http://localhost:8000/api/v1/pipeline/health` | Pure-verdict evaluator checking price feed freshness and detecting stuck jobs. |
+| **Live SSE Telemetry Stream** | `curl -N http://localhost:8000/api/v1/telemetry/stream` | Real-time Server-Sent Events stream yielding NDJSON events for every candle rollup. |
 | **Prometheus Metrics** | `curl -s http://localhost:8000/metrics` | Asks *"What are the tick counters, active WebSocket connections, and latency histograms?"* |
 | **Process Inspection** | `docker top savisor-market-node` | Asks *"Are all 6 internal processes (Supervisord, Wine, MT5, gRPC, Uvicorn, Xvfb) active in RAM?"* |
+
+### Granular & Exclusionary Ingestion Controls
+```bash
+# Pause EURUSD ingestion individually
+curl -X POST "http://localhost:8000/api/v1/pipeline/pause?symbol=EURUSD" -H "X-API-Key: your_key"
+
+# Ingest ONLY USDJPY and pause all other active symbols
+curl -X POST http://localhost:8000/api/v1/pipeline/control -H "X-API-Key: your_key" \
+  -H "Content-Type: application/json" -d '{"action": "pause", "scope": "exclude", "symbols": ["USDJPY"]}'
+
+# Resume all symbols globally
+curl -X POST http://localhost:8000/api/v1/pipeline/resume -H "X-API-Key: your_key"
+```
+
 
 ---
 

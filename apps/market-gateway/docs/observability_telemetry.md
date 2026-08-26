@@ -85,9 +85,71 @@ curl -s http://localhost:8000/metrics | head -n 30
 | `savisor_active_ws_connections{symbol="EURUSD"}` | Gauge | Number of active connected WebSocket clients. |
 | `savisor_backfill_duration_seconds_bucket` | Histogram | Backfill pipeline latency distribution. |
 
+## 4. Pure-Verdict Health Monitor (`GET /api/v1/pipeline/health`)
+
+Adopted from the observe-only health monitor architecture in `cifra-connectors`:
+* **Zero Side-Effects**: Evaluates system state without modifying databases or triggering broker requests.
+* **Tick Freshness Detector**: Flags `WARNING` if price feed age exceeds 15s, or `ERROR` if age exceeds 45s (stale broker feed).
+* **Stuck Job Detector**: Automatically catches background backfill jobs that remain in non-terminal states (`in_progress`, `fetching_chunk`) for $> 180$ seconds.
+
+```bash
+curl -s -H "X-API-Key: your_secret_api_key_here" \
+  "http://localhost:8000/api/v1/pipeline/health"
+```
+
+**Sample Healthy Response**:
+```json
+{
+  "overall": "OK",
+  "timestamp": 1787775710,
+  "checks": [
+    {
+      "check": "tick_freshness",
+      "severity": "OK",
+      "message": "All 4 active symbols receiving fresh ticks (max age: 1.2s)",
+      "context": {
+        "total_active": 4,
+        "max_age_seconds": 1.2
+      }
+    },
+    {
+      "check": "stuck_jobs",
+      "severity": "OK",
+      "message": "0 stuck pipeline jobs detected.",
+      "context": {
+        "stuck_count": 0,
+        "stuck_jobs": [],
+        "max_age_seconds": 180.0
+      }
+    }
+  ]
+}
+```
+
 ---
 
-## 4. Live Container Process Tree (`docker top`)
+## 5. Real-Time Telemetry Event Stream (`GET /api/v1/telemetry/stream`)
+
+The node provides an open Server-Sent Events (SSE) stream allowing monitoring UIs and terminal operators to tail pipeline and candle events in real time:
+
+```bash
+curl -N http://localhost:8000/api/v1/telemetry/stream
+```
+
+**Live Event Stream**:
+```text
+data: {"event": "connected", "timestamp": 1787775700, "message": "SSE telemetry stream established"}
+
+data: {"timestamp": 1787775705, "event": "candle_closed_rollup", "symbol": "EURUSD", "timeframe": "M1", "candle_time": 1787775660, "close": 1.16530, "duration_ms": 42.1}
+
+data: {"timestamp": 1787775710, "event": "backfill_chunk_fetched", "symbol": "USDJPY", "timeframe": "M1", "chunk_rows": 25000, "total_fetched": 50000}
+
+data: {"timestamp": 1787775715, "event": "pipeline_paused", "symbol": "EURUSD", "scope": "symbol"}
+```
+
+---
+
+## 6. Live Container Process Tree (`docker top`)
 
 Verify that all internal Linux and Windows/Wine processes are active in RAM without needing an SSH shell:
 
@@ -102,3 +164,4 @@ docker top savisor-market-node
 4. `Xvfb :1 -screen 0 1920x1080x16` (Virtual display buffer)
 5. `C:\MetaTrader5\terminal64.exe /portable` (Native MT5 terminal)
 6. `x11vnc -display :1` (TigerVNC remote desktop server)
+

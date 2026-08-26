@@ -1,3 +1,10 @@
+"""
+BackfillWorker - Orchestrates deep historical ingestion, incremental candle rollups,
+and granular per-symbol / exclusionary pipeline ingestion controls.
+"""
+
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
@@ -5,13 +12,10 @@ import time
 from typing import Any
 
 from app.grpc_client import TerminalGRPCClient
-from app.pipeline.parquet_exporter import (
-    dataframe_to_compact_json_bytes,
-    dataframe_to_parquet_bytes,
-    merge_rates_with_parquet,
-)
+from app.pipeline.stream_sink import StreamParquetSink
 from app.storage.base import StorageBackend
 from app.telemetry.base import AuditRecord, AuditSink
+from app.telemetry.event_broadcaster import broadcaster
 
 logger = logging.getLogger("pipeline.backfill_worker")
 
@@ -63,18 +67,140 @@ class BackfillWorker:
         self._sync_locks: dict[str, asyncio.Lock] = {}
         self._master_lock = asyncio.Lock()
         self.status_registry: dict[str, Any] = {}
-        self.is_paused: bool = False
+
+        # Granular & Global Ingestion Pause Control States
+        self.global_paused: bool = False
+        self._paused_symbols: set[str] = set()
+
         logger.info(f"Initialized BackfillWorker with storage: {type(storage_backend).__name__}")
 
-    def pause(self):
-        """Pauses historical data extraction and storage pushes."""
-        self.is_paused = True
-        logger.warning("Pipeline ingestion and storage pushes PAUSED")
+    @property
+    def is_paused(self) -> bool:
+        """Backward-compatible boolean indicating if the entire pipeline is globally paused."""
+        return self.global_paused
 
-    def resume(self):
-        """Resumes historical data extraction and storage pushes."""
-        self.is_paused = False
-        logger.info("Pipeline ingestion and storage pushes RESUMED")
+    def is_symbol_paused(self, symbol: str) -> bool:
+        """Returns True if the symbol is individually paused or if global pipeline is paused."""
+        sym = symbol.upper()
+        return self.global_paused or (sym in self._paused_symbols)
+
+    def get_paused_symbols(self) -> list[str]:
+        """Returns a sorted list of individually paused symbols."""
+        return sorted(self._paused_symbols)
+
+    def pause(self, symbol: str | None = None) -> dict[str, Any]:
+        """Pauses historical data extraction and storage pushes globally or for a specific symbol."""
+        if symbol:
+            sym = symbol.upper()
+            self._paused_symbols.add(sym)
+            logger.warning(f"Pipeline ingestion PAUSED for symbol: {sym}")
+            broadcaster.broadcast("pipeline_paused", {"symbol": sym, "scope": "symbol"})
+            return {
+                "status": "paused",
+                "scope": "symbol",
+                "symbol": sym,
+                "paused_symbols": self.get_paused_symbols(),
+                "global_paused": self.global_paused,
+            }
+
+        self.global_paused = True
+        logger.warning("Pipeline ingestion and storage pushes GLOBALLY PAUSED")
+        broadcaster.broadcast("pipeline_paused", {"scope": "global"})
+        return {
+            "status": "paused",
+            "scope": "global",
+            "global_paused": True,
+            "paused_symbols": self.get_paused_symbols(),
+        }
+
+    def resume(self, symbol: str | None = None) -> dict[str, Any]:
+        """Resumes historical data extraction and storage pushes globally or for a specific symbol."""
+        if symbol:
+            sym = symbol.upper()
+            self._paused_symbols.discard(sym)
+            logger.info(f"Pipeline ingestion RESUMED for symbol: {sym}")
+            broadcaster.broadcast("pipeline_resumed", {"symbol": sym, "scope": "symbol"})
+            return {
+                "status": "active",
+                "scope": "symbol",
+                "symbol": sym,
+                "paused_symbols": self.get_paused_symbols(),
+                "global_paused": self.global_paused,
+            }
+
+        self.global_paused = False
+        self._paused_symbols.clear()
+        logger.info("Pipeline ingestion and storage pushes GLOBALLY RESUMED (all symbols unpaused)")
+        broadcaster.broadcast("pipeline_resumed", {"scope": "global"})
+        return {
+            "status": "active",
+            "scope": "global",
+            "global_paused": False,
+            "paused_symbols": [],
+        }
+
+    def bulk_control(
+        self,
+        action: str,
+        scope: str,
+        symbols: list[str] | None = None,
+        active_symbols: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """
+        Executes granular or exclusionary bulk pause/resume operations across symbols.
+        - scope: 'all' -> pause/resume everything.
+        - scope: 'symbols' -> pause/resume specified symbols.
+        - scope: 'exclude' -> pause all active symbols except specified symbols (e.g. ingest ONLY USDJPY).
+        """
+        action = action.lower()
+        scope = scope.lower()
+        targets = [s.upper() for s in (symbols or [])]
+        active = [s.upper() for s in (active_symbols or [])]
+
+        if scope == "all":
+            if action == "pause":
+                return self.pause()
+            return self.resume()
+
+        if scope == "symbols":
+            for s in targets:
+                if action == "pause":
+                    self._paused_symbols.add(s)
+                else:
+                    self._paused_symbols.discard(s)
+            broadcaster.broadcast(f"pipeline_{action}", {"scope": "symbols", "symbols": targets})
+            return {
+                "status": "success",
+                "action": action,
+                "scope": "symbols",
+                "affected_symbols": targets,
+                "paused_symbols": self.get_paused_symbols(),
+                "global_paused": self.global_paused,
+            }
+
+        if scope == "exclude":
+            # Target symbols remain ACTIVE; all other active symbols are PAUSED
+            self.global_paused = False
+            self._paused_symbols.clear()
+            for s in active:
+                if s not in targets:
+                    self._paused_symbols.add(s)
+            logger.info(
+                f"Bulk control applied exclusion: Ingesting ONLY {targets}, paused: {self.get_paused_symbols()}"
+            )
+            broadcaster.broadcast(
+                "pipeline_exclusion_applied", {"active_only": targets, "paused": self.get_paused_symbols()}
+            )
+            return {
+                "status": "success",
+                "action": "exclusive_ingest",
+                "scope": "exclude",
+                "active_only": targets,
+                "paused_symbols": self.get_paused_symbols(),
+                "global_paused": False,
+            }
+
+        raise ValueError(f"Invalid scope '{scope}'. Supported scopes: 'all', 'symbols', 'exclude'")
 
     async def _get_symbol_lock(self, symbol: str) -> asyncio.Lock:
         async with self._master_lock:
@@ -98,17 +224,22 @@ class BackfillWorker:
         symbol = symbol.upper()
         tfs = timeframes or self.timeframes
 
-        if self.is_paused:
-            logger.warning(f"Pipeline is currently paused. Skipping backfill for {symbol}")
+        if self.is_symbol_paused(symbol):
+            logger.warning(f"Pipeline is paused for {symbol}. Skipping backfill.")
             return {
                 "symbol": symbol,
                 "status": "paused",
-                "message": "Pipeline ingestion is paused. Resume pipeline to execute backfills.",
+                "message": f"Pipeline ingestion is paused for {symbol}. Resume to execute backfill.",
                 "timeframes": tfs,
             }
 
         lock = await self._get_symbol_lock(symbol)
         start_time_sec = time.time()
+
+        broadcaster.broadcast(
+            "backfill_started",
+            {"symbol": symbol, "timeframes": tfs, "candle_count": candle_count},
+        )
 
         if self.audit_sink:
             self.audit_sink.record(
@@ -130,7 +261,8 @@ class BackfillWorker:
             "symbol": symbol,
             "timeframes": {},
             "status": "in_progress",
-            "started_at": int(start_time_sec),
+            "start_time": int(start_time_sec),
+            "updated_at": int(start_time_sec),
         }
         self.status_registry[symbol] = results
 
@@ -145,6 +277,7 @@ class BackfillWorker:
                         logger.warning(f"Skipping unsupported timeframe: {tf}")
                         continue
 
+                    sink = StreamParquetSink(symbol, tf, self.storage)
                     all_rates: list[dict[str, Any]] = []
 
                     if date_from and date_to:
@@ -153,9 +286,10 @@ class BackfillWorker:
                             self.grpc_client.get_rates_range, symbol, tf_val, date_from, date_to
                         )
                     else:
-                        # Chunked batch pagination for large candle counts
                         chunk_size = 25000
-                        logger.info(f"Backfilling {symbol} {tf} (target_count={candle_count}, chunk_size={chunk_size})...")
+                        logger.info(
+                            f"Backfilling {symbol} {tf} (target_count={candle_count}, chunk_size={chunk_size})..."
+                        )
                         start_pos = 0
                         remaining = candle_count
 
@@ -165,44 +299,45 @@ class BackfillWorker:
                                 self.grpc_client.get_rates_from_pos, symbol, tf_val, start_pos, current_batch_size
                             )
                             if not batch:
-                                logger.info(f"No further historical rates returned for {symbol} {tf} at pos {start_pos}")
+                                logger.info(
+                                    f"No further historical rates returned for {symbol} {tf} at pos {start_pos}"
+                                )
                                 break
 
                             all_rates.extend(batch)
                             start_pos += len(batch)
                             remaining -= len(batch)
 
-                            # If batch returned fewer than requested, terminal reached oldest available history
+                            broadcaster.broadcast(
+                                "backfill_chunk_fetched",
+                                {
+                                    "symbol": symbol,
+                                    "timeframe": tf,
+                                    "chunk_rows": len(batch),
+                                    "total_fetched": len(all_rates),
+                                },
+                            )
+
                             if len(batch) < current_batch_size:
                                 break
 
                     if not all_rates:
                         logger.warning(f"No rates returned for {symbol} {tf}")
+                        sink.abort()
                         results["timeframes"][tf] = {"count": 0, "status": "empty"}
                         continue
 
-                    parquet_path = f"data/{symbol}/{tf}/history.parquet"
-                    json_path = f"data/{symbol}/{tf}/recent.json"
-
-                    existing_bytes = self.storage.read_bytes(parquet_path)
-                    merged_df = merge_rates_with_parquet(existing_bytes, all_rates)
-
-                    parquet_bytes = dataframe_to_parquet_bytes(merged_df)
-                    recent_json_bytes = dataframe_to_compact_json_bytes(merged_df, limit=500)
-
-                    p_ok = self.storage.upload_bytes(
-                        parquet_bytes, parquet_path, content_type="application/vnd.apache.parquet"
-                    )
-                    j_ok = self.storage.upload_bytes(recent_json_bytes, json_path, content_type="application/json")
+                    sink.add_candles(all_rates)
+                    sink_summary = sink.close(write_recent_json=True)
 
                     results["timeframes"][tf] = {
-                        "candle_count": len(merged_df),
-                        "start_time": int(merged_df["time"].min()),
-                        "end_time": int(merged_df["time"].max()),
-                        "parquet_uploaded": p_ok,
-                        "json_uploaded": j_ok,
-                        "parquet_url": self.storage.get_public_url(parquet_path),
-                        "json_url": self.storage.get_public_url(json_path),
+                        "candle_count": sink_summary.get("total_partition_rows", len(all_rates)),
+                        "records_ingested": sink_summary.get("records_ingested", len(all_rates)),
+                        "chunks_flushed": sink_summary.get("chunks_flushed", 1),
+                        "parquet_uploaded": sink_summary.get("uploaded", True),
+                        "json_uploaded": sink_summary.get("uploaded", True),
+                        "parquet_url": self.storage.get_public_url(f"data/{symbol}/{tf}/history.parquet"),
+                        "json_url": self.storage.get_public_url(f"data/{symbol}/{tf}/recent.json"),
                     }
 
                 manifest_path = f"data/{symbol}/manifest.json"
@@ -219,10 +354,11 @@ class BackfillWorker:
 
                 elapsed_ms = (time.time() - start_time_sec) * 1000.0
                 results["status"] = "completed"
-
                 results["completed_at"] = int(time.time())
                 results["duration_ms"] = round(elapsed_ms, 2)
                 logger.info(f"Successfully completed deep backfill for {symbol} in {elapsed_ms:.2f}ms")
+
+                broadcaster.broadcast("backfill_completed", {"symbol": symbol, "duration_ms": elapsed_ms})
 
                 if self.audit_sink:
                     self.audit_sink.record(
@@ -244,6 +380,8 @@ class BackfillWorker:
                 results["status"] = "failed"
                 results["error"] = str(e)
                 results["duration_ms"] = round(elapsed_ms, 2)
+
+                broadcaster.broadcast("backfill_failed", {"symbol": symbol, "error": str(e)})
 
                 if self.audit_sink:
                     self.audit_sink.record(
@@ -267,8 +405,8 @@ class BackfillWorker:
         symbol = symbol.upper()
         timeframe = timeframe.upper()
 
-        if self.is_paused:
-            logger.debug(f"Pipeline is currently paused. Skipping closed candle rollup for {symbol} {timeframe}")
+        if self.is_symbol_paused(symbol):
+            logger.debug(f"Pipeline is currently paused for {symbol}. Skipping closed candle rollup.")
             return
 
         lock = await self._get_symbol_lock(symbol)
@@ -279,21 +417,23 @@ class BackfillWorker:
                 logger.info(
                     f"Incrementally rolling closed candle for {symbol} {timeframe} at {closed_candle.get('time')}"
                 )
-                parquet_path = f"data/{symbol}/{timeframe}/history.parquet"
-                json_path = f"data/{symbol}/{timeframe}/recent.json"
+                sink = StreamParquetSink(symbol, timeframe, self.storage)
+                sink.add_candle(closed_candle)
+                sink.close(write_recent_json=True)
 
-                existing_bytes = self.storage.read_bytes(parquet_path)
-                merged_df = merge_rates_with_parquet(existing_bytes, [closed_candle])
-
-                new_parquet_bytes = dataframe_to_parquet_bytes(merged_df)
-                new_json_bytes = dataframe_to_compact_json_bytes(merged_df, limit=500)
-
-                self.storage.upload_bytes(
-                    new_parquet_bytes, parquet_path, content_type="application/vnd.apache.parquet"
-                )
-                self.storage.upload_bytes(new_json_bytes, json_path, content_type="application/json")
                 elapsed_ms = (time.time() - start_time_sec) * 1000.0
                 logger.debug(f"Incremental rollup saved for {symbol} {timeframe} ({elapsed_ms:.2f}ms)")
+
+                broadcaster.broadcast(
+                    "candle_closed_rollup",
+                    {
+                        "symbol": symbol,
+                        "timeframe": timeframe,
+                        "candle_time": closed_candle.get("time"),
+                        "close": closed_candle.get("close"),
+                        "duration_ms": elapsed_ms,
+                    },
+                )
 
                 if self.audit_sink:
                     self.audit_sink.record(

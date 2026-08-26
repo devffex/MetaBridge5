@@ -165,12 +165,55 @@ data/
 
 ---
 
-## 5. Multi-CDN Distribution & Instant Purge
+---
 
-* **Base URL**: `https://cdn.jsdelivr.net/gh/<organization>/<dataset_repo>@<branch>`
-* **Edge CDN Routing**: Served worldwide by Cloudflare + Fastly edge nodes with zero egress fees.
-* **Instant Cache Purge**: On every candle rollover or backfill completion, the node calls:
-  ```text
-  GET https://purge.jsdelivr.net/gh/<organization>/<dataset_repo>@<branch>/data/EURUSD/M1/recent.json
-  ```
-  Edge caches are updated within 500ms globally.
+## 6. Streaming Sink Architecture (`StreamParquetSink`)
+
+Adopted from the enterprise streaming sink patterns in `cifra-connectors`:
+* **Chunked In-Memory Buffers**: Collects candle data in memory up to `SAVISOR_PARQUET_BATCH_ROWS` (default: `25,000` rows).
+* **Staged Chunk Creation**: Periodically writes flushed rows into local temporary Snappy Parquet chunks in `/tmp/savisor_sink_<symbol>_<tf>_*`.
+* **Atomic Storage Upload**: Merges all chunks with existing cloud history and commits the complete Parquet and JSON files atomically in one storage operation.
+* **Safe Error Abort**: If a network timeout or broker error occurs mid-stream, `sink.abort()` executes automatically to cleanly wipe local temporary staging files without corrupting existing datasets.
+
+---
+
+## 7. Granular Per-Symbol & Exclusionary Pipeline Ingestion Controls
+
+Operators can dynamically control which symbols actively extract data and push to storage without stopping the container or closing real-time WebSocket feeds:
+
+### A. Global Pause & Resume
+```bash
+# Globally pause all ingestion and storage pushes
+curl -X POST http://localhost:8000/api/v1/pipeline/pause \
+  -H "X-API-Key: your_secret_api_key_here"
+
+# Globally resume all ingestion
+curl -X POST http://localhost:8000/api/v1/pipeline/resume \
+  -H "X-API-Key: your_secret_api_key_here"
+```
+
+### B. Per-Symbol Pause & Resume
+```bash
+# Pause ONLY EURUSD (other symbols continue ingesting)
+curl -X POST "http://localhost:8000/api/v1/pipeline/pause?symbol=EURUSD" \
+  -H "X-API-Key: your_secret_api_key_here"
+
+# Resume ONLY EURUSD
+curl -X POST "http://localhost:8000/api/v1/pipeline/resume?symbol=EURUSD" \
+  -H "X-API-Key: your_secret_api_key_here"
+```
+
+### C. Bulk Exclusionary Control (Ingest ONLY Specific Symbols)
+To ingest data for one or more specific symbols (e.g. `USDJPY`) and pause all other active watchlist symbols in a single call:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/pipeline/control \
+  -H "X-API-Key: your_secret_api_key_here" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "action": "pause",
+    "scope": "exclude",
+    "symbols": ["USDJPY"]
+  }'
+```
+

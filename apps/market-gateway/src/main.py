@@ -23,14 +23,17 @@ from prometheus_client import (
     Histogram,
     generate_latest,
 )
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from starlette.responses import StreamingResponse
 
 from app.engine.candle0_manager import Candle0Manager
 from app.grpc_client import TerminalGRPCClient
 from app.pipeline.backfill_worker import TIMEFRAME_MAP, BackfillWorker
+from app.pipeline.health_monitor import evaluate_pipeline_health
 from app.storage.base import StorageBackend
 from app.storage.factory import StorageFactory
 from app.telemetry.base import AuditRecord, AuditSink
+from app.telemetry.event_broadcaster import broadcaster
 from app.telemetry.factory import AuditLoggerFactory
 
 # Setup logging
@@ -49,6 +52,8 @@ WS_CONNECTIONS_GAUGE = Gauge("savisor_ws_active_connections", "Active WebSocket 
 BACKFILL_DURATION_SECONDS = Histogram(
     "savisor_backfill_duration_seconds", "Duration of backfill operations in seconds", ["symbol"]
 )
+TICK_AGE_SECONDS = Gauge("savisor_symbol_tick_age_seconds", "Seconds elapsed since last price tick", ["symbol"])
+STUCK_JOBS_GAUGE = Gauge("savisor_stuck_pipeline_jobs_count", "Number of stuck non-terminal pipeline jobs")
 
 from contextlib import asynccontextmanager
 
@@ -108,6 +113,11 @@ class BackfillRequest(BaseModel):
     date_from: str | None = None
     date_to: str | None = None
 
+
+class PipelineControlRequest(BaseModel):
+    action: str = Field("pause", description="'pause' or 'resume'")
+    scope: str = Field("all", description="'all', 'symbols', or 'exclude'")
+    symbols: list[str] = Field(default_factory=list, description="Target asset symbols")
 
 
 @asynccontextmanager
@@ -310,7 +320,6 @@ async def trigger_backfill(
                 date_to=payload.date_to,
             )
 
-
     background_tasks.add_task(_do_backfill)
     return {
         "status": "triggered",
@@ -320,48 +329,119 @@ async def trigger_backfill(
 
 
 @app.post("/api/v1/pipeline/pause", dependencies=[Depends(verify_api_key)])
-def pause_pipeline():
-    """Pauses historical data extraction and storage pushes on demand."""
+def pause_pipeline(symbol: str | None = Query(None, description="Optional symbol to pause individually")):
+    """Pauses historical data extraction and storage pushes globally or for a specific symbol."""
     if not backfill_worker:
         raise HTTPException(status_code=500, detail="Backfill worker uninitialized")
-    backfill_worker.pause()
+    res = backfill_worker.pause(symbol)
     return {
         "status": "paused",
-        "paused": True,
-        "message": "Pipeline data extraction and storage push have been paused.",
+        **res,
+        "message": f"Pipeline ingestion paused for {symbol.upper() if symbol else 'all symbols'}.",
     }
 
 
 @app.post("/api/v1/pipeline/resume", dependencies=[Depends(verify_api_key)])
-def resume_pipeline():
-    """Resumes historical data extraction and storage pushes."""
+def resume_pipeline(symbol: str | None = Query(None, description="Optional symbol to resume individually")):
+    """Resumes historical data extraction and storage pushes globally or for a specific symbol."""
     if not backfill_worker:
         raise HTTPException(status_code=500, detail="Backfill worker uninitialized")
-    backfill_worker.resume()
+    res = backfill_worker.resume(symbol)
     return {
         "status": "active",
-        "paused": False,
-        "message": "Pipeline data extraction and storage push have been resumed.",
+        **res,
+        "message": f"Pipeline ingestion resumed for {symbol.upper() if symbol else 'all symbols'}.",
     }
+
+
+@app.post("/api/v1/pipeline/control", dependencies=[Depends(verify_api_key)])
+def control_pipeline(payload: PipelineControlRequest):
+    """
+    Executes bulk or exclusionary pause/resume ingestion operations.
+    Supports scopes: 'all', 'symbols', or 'exclude' (e.g. ingest ONLY USDJPY and pause others).
+    """
+    if not backfill_worker:
+        raise HTTPException(status_code=500, detail="Backfill worker uninitialized")
+    try:
+        active_syms = (
+            [s.get("name") for s in grpc_client.get_symbols(selected_only=True) if s.get("name")] if grpc_client else []
+        )
+    except Exception:
+        active_syms = []
+
+    try:
+        res = backfill_worker.bulk_control(
+            action=payload.action,
+            scope=payload.scope,
+            symbols=payload.symbols,
+            active_symbols=active_syms,
+        )
+        return res
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.get("/api/v1/pipeline/status", dependencies=[Depends(verify_api_key)])
 def get_pipeline_status(symbol: str | None = Query(None)):
-    """Inspects backfill worker status registry and active pause state."""
+    """Inspects backfill worker status registry and granular active/paused states."""
     if not backfill_worker:
         raise HTTPException(status_code=500, detail="Backfill worker uninitialized")
+    try:
+        active_names = (
+            [s.get("name") for s in grpc_client.get_symbols(selected_only=True) if s.get("name")] if grpc_client else []
+        )
+    except Exception:
+        active_names = []
+
+    paused_syms = backfill_worker.get_paused_symbols()
     if symbol:
-        symbol_status = backfill_worker.status_registry.get(symbol.upper(), {"status": "not_found"})
+        sym = symbol.upper()
+        symbol_status = backfill_worker.status_registry.get(sym, {"status": "not_found"})
         return {
-            "symbol": symbol.upper(),
-            "paused": backfill_worker.is_paused,
+            "symbol": sym,
+            "global_paused": backfill_worker.global_paused,
+            "symbol_paused": backfill_worker.is_symbol_paused(sym),
             "status": symbol_status,
         }
     return {
-        "paused": backfill_worker.is_paused,
+        "global_paused": backfill_worker.global_paused,
+        "paused_symbols": paused_syms,
+        "active_symbols": active_names,
         "registry": backfill_worker.status_registry,
     }
 
+
+@app.get("/api/v1/pipeline/health", dependencies=[Depends(verify_api_key)])
+def get_pipeline_health():
+    """
+    Pure-verdict health evaluation: checks price feed freshness and catches stuck pipeline jobs.
+    Adopted from the observe-only health monitor architecture in cifra-connectors.
+    """
+    if not backfill_worker:
+        raise HTTPException(status_code=500, detail="Backfill worker uninitialized")
+    try:
+        active_syms = grpc_client.get_symbols(selected_only=True) if grpc_client else []
+    except Exception:
+        active_syms = []
+
+    return evaluate_pipeline_health(active_syms, backfill_worker.status_registry)
+
+
+@app.get("/api/v1/telemetry/stream")
+async def stream_telemetry():
+    """
+    Real-time Server-Sent Events (SSE) stream for live pipeline and candle telemetry.
+    Yields NDJSON payloads for every candle rollup, chunk fetch, and pause/resume event.
+    """
+    return StreamingResponse(
+        broadcaster.subscribe(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 # ---------------------------------------------------------

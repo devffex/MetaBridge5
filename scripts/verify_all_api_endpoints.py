@@ -128,19 +128,19 @@ async def run_all_tests():
     st, ok, sample = make_request("/api/v1/market/rates/from?symbol=EURUSD&timeframe=H1&date_from=2026-08-25T00:00:00Z&count=2", "GET", auth=True)
     log_result("/api/v1/market/rates/from", "GET", st, ok, sample)
 
-    # 15. /api/v1/pipeline/pause (POST - Pause extraction & storage pushes)
-    st, ok, sample = make_request("/api/v1/pipeline/pause", "POST", auth=True)
-    log_result("/api/v1/pipeline/pause", "POST", st, ok, sample)
+    # 15. /api/v1/pipeline/pause?symbol=EURUSD (POST - Per-symbol pause)
+    st, ok, sample = make_request("/api/v1/pipeline/pause?symbol=EURUSD", "POST", auth=True)
+    log_result("/api/v1/pipeline/pause?symbol=EURUSD", "POST", st, ok, sample)
 
-    # 16. /api/v1/pipeline/status (GET - inspect pause state)
-    st, ok, sample = make_request("/api/v1/pipeline/status", "GET", auth=True)
-    log_result("/api/v1/pipeline/status (paused)", "GET", st, ok, sample)
+    # 16. /api/v1/pipeline/control (POST - Bulk exclusionary control: ingest ONLY USDJPY)
+    st, ok, sample = make_request("/api/v1/pipeline/control", "POST", body={"action": "pause", "scope": "exclude", "symbols": ["USDJPY"]}, auth=True)
+    log_result("/api/v1/pipeline/control (exclude USDJPY)", "POST", st, ok, sample)
 
-    # 17. /api/v1/pipeline/backfill (POST - trigger while paused -> safely held/skipped)
-    st, ok, sample = make_request("/api/v1/pipeline/backfill", "POST", body={"symbol": "EURUSD", "candle_count": 100, "timeframes": ["M1"]}, auth=True)
-    log_result("/api/v1/pipeline/backfill (paused)", "POST", st, ok, sample)
+    # 17. /api/v1/pipeline/health (GET - Pure-verdict diagnostic monitor)
+    st, ok, sample = make_request("/api/v1/pipeline/health", "GET", auth=True)
+    log_result("/api/v1/pipeline/health", "GET", st, ok, sample)
 
-    # 18. /api/v1/pipeline/resume (POST - Resume extraction & storage pushes)
+    # 18. /api/v1/pipeline/resume (POST - Resume extraction & storage pushes globally)
     st, ok, sample = make_request("/api/v1/pipeline/resume", "POST", auth=True)
     log_result("/api/v1/pipeline/resume", "POST", st, ok, sample)
 
@@ -148,7 +148,11 @@ async def run_all_tests():
     st, ok, sample = make_request("/api/v1/pipeline/status", "GET", auth=True)
     log_result("/api/v1/pipeline/status (resumed)", "GET", st, ok, sample)
 
-    # 20. /api/v1/symbols/active/{symbol} (DELETE)
+    # 20. /api/v1/pipeline/pause (POST - leave paused safely)
+    st, ok, sample = make_request("/api/v1/pipeline/pause", "POST", auth=True)
+    log_result("/api/v1/pipeline/pause (global pause)", "POST", st, ok, sample)
+
+    # 21. /api/v1/symbols/active/{symbol} (DELETE)
     st, ok, sample = make_request("/api/v1/symbols/active/EURUSD", "DELETE", auth=True)
     log_result("/api/v1/symbols/active/EURUSD", "DELETE", st, ok, sample)
 
@@ -157,6 +161,7 @@ async def run_all_tests():
     passed = sum(1 for r in report_items if r["success"])
     print(f"VERIFICATION COMPLETE: {passed}/{total} ENDPOINTS PASSED (100% SUCCESS)")
     print("=" * 70)
+
 
     with open("/home/julio/Work/savisor/savisor-node/live_api_verification_results.json", "w") as f:
         json.dump(report_items, f, indent=2)

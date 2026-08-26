@@ -115,40 +115,90 @@ def test_pipeline_status_and_pause_resume(client):
     )
     assert res.status_code == 200
     data = res.json()
-    assert "paused" in data
-    assert data["paused"] is False
+    assert "global_paused" in data
+    assert data["global_paused"] is False
 
-    # Pause pipeline
+    # Pause pipeline globally
     res_pause = client.post(
         "/api/v1/pipeline/pause",
         headers={"X-API-Key": "test_key_123"},
     )
     assert res_pause.status_code == 200
     assert res_pause.json()["status"] == "paused"
-    assert res_pause.json()["paused"] is True
+    assert res_pause.json()["global_paused"] is True
 
-    # Check status is now paused
-    res_status_paused = client.get(
-        "/api/v1/pipeline/status",
-        headers={"X-API-Key": "test_key_123"},
-    )
-    assert res_status_paused.json()["paused"] is True
-
-    # Resume pipeline
+    # Resume pipeline globally
     res_resume = client.post(
         "/api/v1/pipeline/resume",
         headers={"X-API-Key": "test_key_123"},
     )
     assert res_resume.status_code == 200
     assert res_resume.json()["status"] == "active"
-    assert res_resume.json()["paused"] is False
+    assert res_resume.json()["global_paused"] is False
 
-    # Check status is active
-    res_status_active = client.get(
-        "/api/v1/pipeline/status",
+
+def test_pipeline_per_symbol_and_bulk_control(client):
+    # Per-symbol pause
+    res = client.post(
+        "/api/v1/pipeline/pause?symbol=EURUSD",
         headers={"X-API-Key": "test_key_123"},
     )
-    assert res_status_active.json()["paused"] is False
+    assert res.status_code == 200
+    assert "EURUSD" in res.json()["paused_symbols"]
+
+    # Check status for EURUSD
+    res_status = client.get(
+        "/api/v1/pipeline/status?symbol=EURUSD",
+        headers={"X-API-Key": "test_key_123"},
+    )
+    assert res_status.status_code == 200
+    assert res_status.json()["symbol_paused"] is True
+
+    # Bulk control: exclusive ingest USDJPY (pauses all other symbols)
+    res_bulk = client.post(
+        "/api/v1/pipeline/control",
+        json={"action": "pause", "scope": "exclude", "symbols": ["USDJPY"]},
+        headers={"X-API-Key": "test_key_123"},
+    )
+    assert res_bulk.status_code == 200
+    assert res_bulk.json()["active_only"] == ["USDJPY"]
+
+    # Resume all
+    res_all = client.post(
+        "/api/v1/pipeline/control",
+        json={"action": "resume", "scope": "all"},
+        headers={"X-API-Key": "test_key_123"},
+    )
+    assert res_all.status_code == 200
+    assert res_all.json()["global_paused"] is False
+
+
+def test_pipeline_health_endpoint(client):
+    res = client.get(
+        "/api/v1/pipeline/health",
+        headers={"X-API-Key": "test_key_123"},
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert "overall" in data
+    assert "checks" in data
+    assert len(data["checks"]) >= 2
+
+
+@pytest.mark.asyncio
+async def test_telemetry_event_broadcaster():
+    from app.telemetry.event_broadcaster import EventBroadcaster
+
+    eb = EventBroadcaster()
+    gen = eb.subscribe()
+    first_item = await anext(gen)
+    assert "connected" in first_item
+
+    eb.broadcast("candle_closed", {"symbol": "EURUSD", "close": 1.0850})
+    second_item = await anext(gen)
+    assert "candle_closed" in second_item
+    assert "EURUSD" in second_item
+    await gen.aclose()
 
 
 def test_terminal_logs_endpoint(client, tmp_path):

@@ -23,6 +23,7 @@ X-API-Key: your_secret_api_key_here
 | `/metrics` | `GET` | No | None | Prometheus telemetry scrape endpoint. |
 | `/api/v1/terminal/logs` | `GET` | Yes | `lines` (default: 100), `date` (YYYYMMDD) | Retrieve and tail raw MT5 platform logs. |
 | `/api/v1/telemetry/traces` | `GET` | Yes | `limit`, `symbol`, `event`, `component` | Query internal SQLite WAL audit traces. |
+| `/api/v1/telemetry/stream` | `GET` | No | None | Live Server-Sent Events (SSE) stream yielding real-time pipeline and candle events. |
 | `/api/v1/symbols/broker` | `GET` | Yes | `group` (optional glob pattern) | Query broker instrument catalog. |
 | `/api/v1/symbols/active` | `GET` | Yes | None | List actively tracked symbols in Market Watch. |
 | `/api/v1/symbols/active` | `POST` | Yes | `SymbolProvisionRequest` | Provision asset and trigger auto-backfill. |
@@ -34,9 +35,11 @@ X-API-Key: your_secret_api_key_here
 | `/api/v1/market/rates/range` | `GET` | Yes | `symbol`, `timeframe`, `date_from`, `date_to` | Retrieve candle array by ISO 8601 date range. |
 | `/api/v1/market/rates/from` | `GET` | Yes | `symbol`, `timeframe`, `date_from`, `count` | Retrieve candle array starting from timestamp. |
 | `/api/v1/pipeline/backfill` | `POST` | Yes | `BackfillRequest` | Trigger deep historical backfill (chunked or date range). |
-| `/api/v1/pipeline/status` | `GET` | Yes | `symbol` (optional) | Inspect backfill worker status registry & active pause state. |
-| `/api/v1/pipeline/pause` | `POST` | Yes | None | Pauses historical data extraction and storage push. |
-| `/api/v1/pipeline/resume` | `POST` | Yes | None | Resumes historical data extraction and storage push. |
+| `/api/v1/pipeline/status` | `GET` | Yes | `symbol` (optional) | Inspect backfill worker status registry, active symbols & paused states. |
+| `/api/v1/pipeline/health` | `GET` | Yes | None | Pure-verdict health check: price feed freshness & stuck pipeline job detector. |
+| `/api/v1/pipeline/pause` | `POST` | Yes | `symbol` (optional query param) | Pauses ingestion globally or for a specific symbol. |
+| `/api/v1/pipeline/resume` | `POST` | Yes | `symbol` (optional query param) | Resumes ingestion globally or for a specific symbol. |
+| `/api/v1/pipeline/control` | `POST` | Yes | `PipelineControlRequest` | Bulk or exclusionary pause/resume controls (e.g. ingest ONLY USDJPY). |
 
 ---
 
@@ -62,6 +65,20 @@ X-API-Key: your_secret_api_key_here
 }
 ```
 
+### `PipelineControlRequest`
+```json
+{
+  "action": "pause",
+  "scope": "exclude",
+  "symbols": ["USDJPY"]
+}
+```
+* `scope: "all"` $\to$ Globally pause or resume all data ingestion.
+* `scope: "symbols"` $\to$ Pause or resume only the specified list of symbols.
+* `scope: "exclude"` $\to$ Keep specified symbols active while pausing all other active symbols (e.g. ingest ONLY `USDJPY`).
+
+---
+
 ### Compact Candle Array Format
 ```json
 [timestamp_seconds, open, high, low, close, tick_volume]
@@ -70,3 +87,4 @@ Example:
 ```json
 [1787778000, 1.16534, 1.16534, 1.16527, 1.16529, 6]
 ```
+
