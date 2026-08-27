@@ -20,7 +20,7 @@ RUN mkdir -p /home/wine/app/market-gateway && \
 USER wine
 
 # Copy gateway source code
-COPY --chown=wine:wine apps/market-gateway/src/ /home/wine/app/market-gateway/app/
+COPY --chown=wine:wine apps/market-gateway/app/ /home/wine/app/market-gateway/app/
 
 # Inject supervisord configuration
 COPY --chown=wine:wine apps/market-gateway/supervisord.conf /etc/supervisor/conf.d/market-gateway.conf
