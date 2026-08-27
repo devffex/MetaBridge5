@@ -106,8 +106,8 @@ class StreamParquetSink:
             self._flush_chunk()
 
         total_records = len(self._all_rows)
-        parquet_key = f"data/{self.symbol}/{self.timeframe}/history.parquet"
-        json_key = f"data/{self.symbol}/{self.timeframe}/recent.json"
+        parquet_key = f"{self.symbol}/{self.timeframe}/history.parquet"
+        json_key = f"{self.symbol}/{self.timeframe}/recent.json"
 
         if total_records == 0:
             self._cleanup_temp()

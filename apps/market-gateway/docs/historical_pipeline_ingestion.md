@@ -14,9 +14,9 @@ flowchart TD
     Worker -->|"1. Request History in 25,000-Bar Batches"| MT5["MetaTrader 5 gRPC Daemon"]
     MT5 -->|"2. Return Raw Rates"| Worker
     Worker -->|"3. Convert & Deduplicate"| DF["Normalized Pandas DataFrame"]
-    DF -->|"4. Snappy Compress"| Parquet["data/<SYMBOL>/<TF>/history.parquet"]
-    DF -->|"5. Compact JSON (Last 500 Bars)"| JSON["data/<SYMBOL>/<TF>/recent.json"]
-    DF -->|"6. Generate Index"| Manifest["data/<SYMBOL>/manifest.json"]
+    DF -->|"4. Snappy Compress"| Parquet["<SYMBOL>/<TF>/history.parquet"]
+    DF -->|"5. Compact JSON (Last 500 Bars)"| JSON["<SYMBOL>/<TF>/recent.json"]
+    DF -->|"6. Generate Index"| Manifest["<SYMBOL>/manifest.json"]
     Parquet & JSON & Manifest --> Storage["StorageBackend (GitHub / S3)"]
     Storage -->|"7. Invalidate Edge Cache"| PurgeAPI["jsDelivr Instant Purge API"]
 ```
@@ -92,8 +92,8 @@ curl -s -H "X-API-Key: your_secret_api_key_here" \
       "end_time": 1787779260,
       "parquet_uploaded": true,
       "json_uploaded": true,
-      "parquet_url": "https://cdn.jsdelivr.net/gh/your_org/dataset@main/data/EURUSD/M1/history.parquet",
-      "json_url": "https://cdn.jsdelivr.net/gh/your_org/dataset@main/data/EURUSD/M1/recent.json"
+      "parquet_url": "https://cdn.jsdelivr.net/gh/your_org/dataset@main/EURUSD/M1/history.parquet",
+      "json_url": "https://cdn.jsdelivr.net/gh/your_org/dataset@main/EURUSD/M1/recent.json"
     }
   }
 }
@@ -106,21 +106,20 @@ curl -s -H "X-API-Key: your_secret_api_key_here" \
 ### Directory Hierarchy in Storage Destination
 
 ```text
-data/
-└── <SYMBOL>/
-    ├── manifest.json                  # Asset metadata and timeframe index
-    ├── M1/
-    │   ├── history.parquet            # Complete compressed historical partition
-    │   └── recent.json                # Latest 500 candles array
-    ├── M5/
-    │   ├── history.parquet
-    │   └── recent.json
-    ├── H1/
-    │   ├── history.parquet
-    │   └── recent.json
-    └── D1/
-        ├── history.parquet
-        └── recent.json
+<SYMBOL>/
+├── manifest.json                  # Asset metadata and timeframe index
+├── M1/
+│   ├── history.parquet            # Complete compressed historical partition
+│   └── recent.json                # Latest 500 candles array
+├── M5/
+│   ├── history.parquet
+│   └── recent.json
+├── H1/
+│   ├── history.parquet
+│   └── recent.json
+└── D1/
+    ├── history.parquet
+    └── recent.json
 ```
 
 ---
@@ -156,8 +155,8 @@ data/
       "candle_count": 100000,
       "start_time": 1781200000,
       "end_time": 1787779260,
-      "parquet_url": "https://cdn.jsdelivr.net/gh/your_org/dataset@main/data/EURUSD/M1/history.parquet",
-      "json_url": "https://cdn.jsdelivr.net/gh/your_org/dataset@main/data/EURUSD/M1/recent.json"
+      "parquet_url": "https://cdn.jsdelivr.net/gh/your_org/dataset@main/EURUSD/M1/history.parquet",
+      "json_url": "https://cdn.jsdelivr.net/gh/your_org/dataset@main/EURUSD/M1/recent.json"
     }
   }
 }

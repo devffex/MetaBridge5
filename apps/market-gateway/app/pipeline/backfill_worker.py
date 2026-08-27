@@ -19,6 +19,8 @@ from app.telemetry.event_broadcaster import broadcaster
 
 logger = logging.getLogger("pipeline.backfill_worker")
 
+import os
+
 # Timeframe mapping to MT5 integer constants
 TIMEFRAME_MAP = {
     "M1": 1,
@@ -44,6 +46,27 @@ TIMEFRAME_MAP = {
     "MN1": 49153,
 }
 
+# Sync interval mapping and supported intervals for GitHub / S3 destinations
+INTERVAL_MAP = {
+    "5M": "M5",
+    "15M": "M15",
+    "30M": "M30",
+    "1H": "H1",
+    "4H": "H4",
+    "1D": "D1",
+    "1W": "W1",
+    "1MO": "MN1",
+    "M5": "M5",
+    "M15": "M15",
+    "M30": "M30",
+    "H1": "H1",
+    "H4": "H4",
+    "D1": "D1",
+    "W1": "W1",
+    "MN1": "MN1",
+}
+SUPPORTED_INTERVALS = ["M5", "M15", "M30", "H1", "H4", "D1", "W1", "MN1"]
+
 
 class BackfillWorker:
     """
@@ -58,11 +81,14 @@ class BackfillWorker:
         storage_backend: StorageBackend,
         audit_sink: AuditSink | None = None,
         default_timeframes: list[str] | None = None,
+        sync_interval: str | None = None,
     ):
         self.grpc_client = grpc_client
         self.storage = storage_backend
         self.audit_sink = audit_sink
-        self.timeframes = default_timeframes or ["M1", "M5", "M15", "M30", "H1", "H4", "D1"]
+        self.timeframes = default_timeframes or ["M1", "M5", "M15", "M30", "H1", "H4", "D1", "W1", "MN1"]
+        raw_interval = sync_interval or os.environ.get("SAVISOR_SYNC_INTERVAL", "D1")
+        self.sync_interval = self.normalize_interval(raw_interval)
         # Symbol sync locks to avoid concurrent writes to the same dataset partition
         self._sync_locks: dict[str, asyncio.Lock] = {}
         self._master_lock = asyncio.Lock()
@@ -72,7 +98,42 @@ class BackfillWorker:
         self.global_paused: bool = False
         self._paused_symbols: set[str] = set()
 
-        logger.info(f"Initialized BackfillWorker with storage: {type(storage_backend).__name__}")
+        logger.info(
+            f"Initialized BackfillWorker with storage: {type(storage_backend).__name__} (Sync Interval: {self.sync_interval})"
+        )
+
+    @staticmethod
+    def normalize_interval(interval: str) -> str:
+        clean = interval.strip().upper()
+        if clean in INTERVAL_MAP:
+            return INTERVAL_MAP[clean]
+        raise ValueError(
+            f"Unsupported sync interval '{interval}'. Supported: {SUPPORTED_INTERVALS} or aliases (5m, 15m, 30m, 1h, 4h, 1d, 1w, 1mo)"
+        )
+
+    def set_sync_interval(self, interval: str) -> str:
+        canonical = self.normalize_interval(interval)
+        old_interval = self.sync_interval
+        self.sync_interval = canonical
+        logger.info(f"Updated dataset sync interval: {old_interval} -> {self.sync_interval}")
+        if self.audit_sink:
+            self.audit_sink.record(
+                AuditRecord(
+                    component="pipeline",
+                    event="sync_interval_changed",
+                    status="info",
+                    metadata={"old_interval": old_interval, "new_interval": self.sync_interval},
+                )
+            )
+        return self.sync_interval
+
+    def get_sync_interval(self) -> dict[str, Any]:
+        return {
+            "active_sync_interval": self.sync_interval,
+            "default_sync_interval": "D1",
+            "supported_intervals": SUPPORTED_INTERVALS,
+            "trigger_mode": "candle_close_event",
+        }
 
     @property
     def is_paused(self) -> bool:
@@ -292,13 +353,30 @@ class BackfillWorker:
                         )
                         start_pos = 0
                         remaining = candle_count
+                        cold_retries = 3
+                        current_chunk_size = chunk_size
 
-                        while remaining > 0:
-                            current_batch_size = min(remaining, chunk_size)
+                        while remaining > 0 and current_chunk_size >= 10:
+                            current_batch_size = min(remaining, current_chunk_size)
                             batch = await asyncio.to_thread(
                                 self.grpc_client.get_rates_from_pos, symbol, tf_val, start_pos, current_batch_size
                             )
+
+                            if not batch and start_pos == 0 and cold_retries > 0:
+                                logger.info(
+                                    f"MT5 returned 0 rates for {symbol} {tf} at pos 0; waiting 1.5s for cache computation (retries left: {cold_retries})..."
+                                )
+                                await asyncio.sleep(1.5)
+                                cold_retries -= 1
+                                continue
+
                             if not batch:
+                                if current_chunk_size > 100:
+                                    current_chunk_size = current_chunk_size // 2
+                                    logger.debug(
+                                        f"Stepping down batch size for {symbol} {tf} to {current_chunk_size}"
+                                    )
+                                    continue
                                 logger.info(
                                     f"No further historical rates returned for {symbol} {tf} at pos {start_pos}"
                                 )
@@ -307,6 +385,8 @@ class BackfillWorker:
                             all_rates.extend(batch)
                             start_pos += len(batch)
                             remaining -= len(batch)
+                            # Reset chunk size back to full for subsequent chunks
+                            current_chunk_size = chunk_size
 
                             broadcaster.broadcast(
                                 "backfill_chunk_fetched",
@@ -336,11 +416,11 @@ class BackfillWorker:
                         "chunks_flushed": sink_summary.get("chunks_flushed", 1),
                         "parquet_uploaded": sink_summary.get("uploaded", True),
                         "json_uploaded": sink_summary.get("uploaded", True),
-                        "parquet_url": self.storage.get_public_url(f"data/{symbol}/{tf}/history.parquet"),
-                        "json_url": self.storage.get_public_url(f"data/{symbol}/{tf}/recent.json"),
+                        "parquet_url": self.storage.get_public_url(f"{symbol}/{tf}/history.parquet"),
+                        "json_url": self.storage.get_public_url(f"{symbol}/{tf}/recent.json"),
                     }
 
-                manifest_path = f"data/{symbol}/manifest.json"
+                manifest_path = f"{symbol}/manifest.json"
                 manifest_data = {
                     "symbol": symbol,
                     "last_updated": int(time.time()),
@@ -400,63 +480,47 @@ class BackfillWorker:
     async def handle_candle_close(self, symbol: str, timeframe: str, closed_candle: dict[str, Any]):
         """
         Incremental sync invoked by Candle0Manager when a candle period closes.
-        Appends closed candle to the recent.json and history.parquet datasets.
+
+        Architectural Recommendation & Rationale:
+        To prevent GitHub rate limits and avoid repository bans, remote storage pushes are gated
+        by the configured `sync_interval` (default: 'D1' / 1 daily candle close).
+
+        We trigger GitHub synchronization specifically when the configured sync interval candle closes
+        (e.g. at the exact moment the 24-hour trading session candle closes in MetaTrader 5), rather than
+        relying on an arbitrary calendar-clock hour timer. This guarantees 100% closed bar integrity
+        without partial candles or race conditions with incoming live ticks.
         """
         symbol = symbol.upper()
-        timeframe = timeframe.upper()
+        tf = timeframe.upper()
 
         if self.is_symbol_paused(symbol):
             logger.debug(f"Pipeline is currently paused for {symbol}. Skipping closed candle rollup.")
             return
 
-        lock = await self._get_symbol_lock(symbol)
-        start_time_sec = time.time()
+        # Check if the closed candle matches the active sync interval
+        if tf != self.sync_interval:
+            logger.debug(
+                f"Skipping remote storage sync for {symbol} {tf}; active sync interval is {self.sync_interval}."
+            )
+            return
 
-        async with lock:
-            try:
-                logger.info(
-                    f"Incrementally rolling closed candle for {symbol} {timeframe} at {closed_candle.get('time')}"
-                )
-                sink = StreamParquetSink(symbol, timeframe, self.storage)
-                sink.add_candle(closed_candle)
-                sink.close(write_recent_json=True)
+        logger.info(
+            f"Sync interval candle closed for {symbol} ({tf} == {self.sync_interval}). Triggering full multi-timeframe dataset synchronization..."
+        )
 
-                elapsed_ms = (time.time() - start_time_sec) * 1000.0
-                logger.debug(f"Incremental rollup saved for {symbol} {timeframe} ({elapsed_ms:.2f}ms)")
-
-                broadcaster.broadcast(
-                    "candle_closed_rollup",
-                    {
-                        "symbol": symbol,
-                        "timeframe": timeframe,
-                        "candle_time": closed_candle.get("time"),
-                        "close": closed_candle.get("close"),
-                        "duration_ms": elapsed_ms,
-                    },
-                )
-
-                if self.audit_sink:
-                    self.audit_sink.record(
-                        AuditRecord(
-                            component="pipeline",
-                            event="candle_closed_rollup",
-                            symbol=symbol,
-                            timeframe=timeframe,
-                            status="success",
-                            duration_ms=elapsed_ms,
-                            metadata={"candle_time": closed_candle.get("time"), "close": closed_candle.get("close")},
-                        )
+        try:
+            # Trigger full multi-timeframe synchronization
+            await self.run_initial_backfill(symbol=symbol, candle_count=100000)
+            logger.info(f"Successfully completed scheduled {self.sync_interval} dataset sync for {symbol}.")
+        except Exception as e:
+            logger.error(f"Failed scheduled {self.sync_interval} dataset sync for {symbol}: {e}")
+            if self.audit_sink:
+                self.audit_sink.record(
+                    AuditRecord(
+                        component="pipeline",
+                        event="scheduled_sync_failed",
+                        symbol=symbol,
+                        status="error",
+                        message=str(e),
                     )
-            except Exception as e:
-                logger.error(f"Failed incremental rollup for {symbol} {timeframe}: {e}")
-                if self.audit_sink:
-                    self.audit_sink.record(
-                        AuditRecord(
-                            component="pipeline",
-                            event="candle_rollup_failed",
-                            symbol=symbol,
-                            timeframe=timeframe,
-                            status="error",
-                            message=str(e),
-                        )
-                    )
+                )

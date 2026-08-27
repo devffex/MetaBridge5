@@ -31,8 +31,8 @@ def test_stream_parquet_sink_buffer_and_close(tmp_path):
     assert summary["timeframe"] == "M1"
 
     # Verify physical file existence in storage
-    assert (tmp_path / "data" / "EURUSD" / "M1" / "history.parquet").exists()
-    assert (tmp_path / "data" / "EURUSD" / "M1" / "recent.json").exists()
+    assert (tmp_path / "EURUSD" / "M1" / "history.parquet").exists()
+    assert (tmp_path / "EURUSD" / "M1" / "recent.json").exists()
 
 
 def test_stream_parquet_sink_abort_cleanup(tmp_path):
@@ -57,4 +57,4 @@ def test_stream_parquet_sink_abort_cleanup(tmp_path):
     sink.abort()
 
     # Nothing should be committed to storage
-    assert not (tmp_path / "data" / "GBPUSD" / "M5" / "history.parquet").exists()
+    assert not (tmp_path / "GBPUSD" / "M5" / "history.parquet").exists()

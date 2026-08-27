@@ -96,7 +96,7 @@ def verify_api_key(x_api_key: str | None = Header(None)):
 class SymbolProvisionRequest(BaseModel):
     symbol: str
     auto_backfill: bool = True
-    candle_count: int = 10000
+    candle_count: int = 100000
 
 
 class SymbolProvisionResponse(BaseModel):
@@ -109,7 +109,7 @@ class SymbolProvisionResponse(BaseModel):
 class BackfillRequest(BaseModel):
     symbol: str
     timeframes: list[str] | None = None
-    candle_count: int = 10000
+    candle_count: int = 100000
     date_from: str | None = None
     date_to: str | None = None
 
@@ -409,6 +409,30 @@ def get_pipeline_status(symbol: str | None = Query(None)):
         "active_symbols": active_names,
         "registry": backfill_worker.status_registry,
     }
+
+
+@app.get("/api/v1/pipeline/interval", dependencies=[Depends(verify_api_key)])
+def get_pipeline_sync_interval():
+    """Returns the active dataset synchronization interval and supported timeframe intervals."""
+    if not backfill_worker:
+        raise HTTPException(status_code=500, detail="Backfill worker uninitialized")
+    return backfill_worker.get_sync_interval()
+
+
+@app.post("/api/v1/pipeline/interval", dependencies=[Depends(verify_api_key)])
+def update_pipeline_sync_interval(interval: str = Query(..., description="Sync interval (e.g. 5m, 15m, 1h, 4h, 1d, 1w, 1mo or M5..MN1)")):
+    """Updates the dataset synchronization interval at runtime."""
+    if not backfill_worker:
+        raise HTTPException(status_code=500, detail="Backfill worker uninitialized")
+    try:
+        updated = backfill_worker.set_sync_interval(interval)
+        return {
+            "status": "success",
+            "active_sync_interval": updated,
+            "message": f"Dataset sync interval updated to {updated}.",
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.get("/api/v1/pipeline/health", dependencies=[Depends(verify_api_key)])

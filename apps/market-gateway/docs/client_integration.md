@@ -20,7 +20,7 @@ export class MarketChartClient {
 
   // 1. Fast Warmup from jsDelivr Multi-CDN
   async warmup() {
-    const cdnUrl = `https://cdn.jsdelivr.net/gh/your_org/dataset@main/data/${this.symbol}/${this.timeframe}/recent.json`;
+    const cdnUrl = `https://cdn.jsdelivr.net/gh/your_org/dataset@main/${this.symbol}/${this.timeframe}/recent.json`;
     const res = await fetch(cdnUrl);
     const rawCandles: [number, number, number, number, number, number][] = await res.json();
     
@@ -65,7 +65,7 @@ async def run_trading_bot(symbol: str = "EURUSD", timeframe: str = "M1"):
     # 1. Warmup from CDN
     async with httpx.AsyncClient() as client:
         res = await client.get(
-            f"https://cdn.jsdelivr.net/gh/your_org/dataset@main/data/{symbol}/{timeframe}/recent.json"
+            f"https://cdn.jsdelivr.net/gh/your_org/dataset@main/{symbol}/{timeframe}/recent.json"
         )
         history = res.json()
         print(f"[{symbol}] Loaded {len(history)} historical bars for indicator warmup.")
@@ -74,7 +74,7 @@ async def run_trading_bot(symbol: str = "EURUSD", timeframe: str = "M1"):
     uri = f"ws://localhost:8000/api/v1/market/ws/{symbol}"
     async with websockets.connect(uri) as ws:
         print(f"[{symbol}] Connected to live market stream.")
-        async for message in ws:
+        for message in ws:
             data = json.loads(message)
             if data.get("type") in ("snapshot", "tick") and timeframe in data.get("candle0", {}):
                 t, o, h, l, c, vol, bid, ask = data["candle0"][timeframe]
@@ -97,7 +97,7 @@ df = duckdb.query("""
         to_timestamp(time) AS timestamp,
         open, high, low, close, tick_volume,
         (close - open) / open * 100 AS return_pct
-    FROM 'https://cdn.jsdelivr.net/gh/your_org/dataset@main/data/EURUSD/H1/history.parquet'
+    FROM 'https://cdn.jsdelivr.net/gh/your_org/dataset@main/EURUSD/H1/history.parquet'
     WHERE time >= 1770000000
     ORDER BY time ASC
 """).df()

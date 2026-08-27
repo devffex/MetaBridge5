@@ -261,3 +261,39 @@ async def test_websocket_snapshot():
     assert "M1" in sent_data["candle0"]
     # Compact candle: [time, open, high, low, close, volume, bid, ask]
     assert sent_data["candle0"]["M1"] == [1700000000, 1.0850, 1.0855, 1.0849, 1.0852, 10, 1.0852, 1.0853]
+
+
+def test_pipeline_sync_interval_endpoints(client):
+    # Test GET interval
+    res = client.get("/api/v1/pipeline/interval", headers={"X-API-Key": "test_key_123"})
+    assert res.status_code == 200
+    data = res.json()
+    assert "active_sync_interval" in data
+    assert "supported_intervals" in data
+    assert data["active_sync_interval"] in ["D1", "1D"]
+
+    # Test POST interval update with alias '1h'
+    res_update = client.post(
+        "/api/v1/pipeline/interval?interval=1h",
+        headers={"X-API-Key": "test_key_123"},
+    )
+    assert res_update.status_code == 200
+    assert res_update.json()["active_sync_interval"] == "H1"
+
+    # Test POST interval update with canonical 'W1'
+    res_w1 = client.post(
+        "/api/v1/pipeline/interval?interval=W1",
+        headers={"X-API-Key": "test_key_123"},
+    )
+    assert res_w1.status_code == 200
+    assert res_w1.json()["active_sync_interval"] == "W1"
+
+    # Test POST invalid interval
+    res_invalid = client.post(
+        "/api/v1/pipeline/interval?interval=invalid_interval",
+        headers={"X-API-Key": "test_key_123"},
+    )
+    assert res_invalid.status_code == 400
+
+    # Reset back to D1
+    client.post("/api/v1/pipeline/interval?interval=D1", headers={"X-API-Key": "test_key_123"})
