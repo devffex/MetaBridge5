@@ -1,0 +1,278 @@
+syntax = "proto3";
+
+package terminal;
+
+service TerminalService {
+  rpc GetHealth(HealthRequest) returns (HealthResponse);
+  rpc GetTerminalInfo(InfoRequest) returns (TerminalInfoResponse);
+  rpc GetAccountInfo(InfoRequest) returns (AccountInfoResponse);
+  rpc GetVersion(InfoRequest) returns (VersionResponse);
+  rpc GetLastError(InfoRequest) returns (ErrorResponse);
+  
+  // Positions & Orders
+  rpc GetPositions(PositionsRequest) returns (PositionsResponse);
+  rpc GetPositionsTotal(InfoRequest) returns (TotalResponse);
+  rpc GetOrders(OrdersRequest) returns (OrdersResponse);
+  rpc GetOrdersTotal(InfoRequest) returns (TotalResponse);
+  
+  // Trading Actions
+  rpc SendOrder(OrderRequest) returns (OrderActionResponse);
+  rpc CheckOrder(OrderRequest) returns (OrderCheckResponse);
+  rpc CalcProfit(CalcProfitRequest) returns (CalcValueResponse);
+  rpc CalcMargin(CalcMarginRequest) returns (CalcValueResponse);
+  rpc Login(LoginRequest) returns (BoolResponse);
+  
+  // History
+  rpc GetHistoryDeals(HistoryRequest) returns (HistoryDealsResponse);
+  rpc GetHistoryDealsTotal(HistoryRequest) returns (TotalResponse);
+  rpc GetHistoryOrders(HistoryRequest) returns (HistoryOrdersResponse);
+  rpc GetHistoryOrdersTotal(HistoryRequest) returns (TotalResponse);
+  
+  // Market Data
+  rpc GetTicksRange(TicksRangeRequest) returns (TicksResponse);
+  rpc GetTicksFrom(TicksFromRequest) returns (TicksResponse);
+  rpc GetRatesRange(RatesRangeRequest) returns (RatesResponse);
+  rpc GetRatesFromPos(RatesFromPosRequest) returns (RatesResponse);
+  rpc GetRatesFrom(RatesFromRequest) returns (RatesResponse);
+  
+  // Order Book
+  rpc AddMarketBook(SymbolRequest) returns (BoolResponse);
+  rpc ReleaseMarketBook(SymbolRequest) returns (BoolResponse);
+  rpc GetMarketBook(SymbolRequest) returns (MarketBookResponse);
+  
+  // Symbols
+  rpc SelectSymbol(SymbolSelectRequest) returns (BoolResponse);
+  rpc GetSymbolsTotal(InfoRequest) returns (TotalResponse);
+  rpc GetSymbols(SymbolsRequest) returns (SymbolsResponse);
+  rpc GetSymbolInfo(SymbolRequest) returns (SymbolInfoResponse);
+  rpc GetSymbolInfoTick(SymbolRequest) returns (TickInfoResponse);
+
+  // Terminal Lifecycle & Operations (MetaForge equivalent actions)
+  rpc StartTerminal(StartTerminalRequest) returns (BoolResponse);
+  rpc StopTerminal(StopTerminalRequest) returns (BoolResponse);
+  rpc GetTerminalStatus(TerminalStatusRequest) returns (TerminalStatusResponse);
+  rpc GetTerminalLogs(TerminalLogsRequest) returns (TerminalLogsResponse);
+  rpc DeployAsset(DeployAssetRequest) returns (DeployAssetResponse);
+}
+
+message HealthRequest {}
+message HealthResponse {
+  string status = 1;
+  string service = 2;
+}
+
+message InfoRequest {}
+
+message TerminalInfoResponse {
+  bool connected = 1;
+  int32 build = 2;
+}
+
+message AccountInfoResponse {
+  int64 login = 1;
+  double balance = 2;
+  string currency = 3;
+  string company = 4;
+}
+
+message VersionResponse {
+  int32 version = 1;
+  int32 build = 2;
+  string release_date = 3;
+}
+
+message ErrorResponse {
+  int32 code = 1;
+  string description = 2;
+}
+
+message TotalResponse {
+  int32 total = 1;
+}
+
+message BoolResponse {
+  bool success = 1;
+}
+
+message PositionsRequest {
+  string symbol = 1;
+  int64 ticket = 2;
+}
+
+message PositionsResponse {
+  string positions_json = 1; // JSON serialized list of positions
+}
+
+message OrdersRequest {
+  string symbol = 1;
+  int64 ticket = 2;
+}
+
+message OrdersResponse {
+  string orders_json = 1; // JSON serialized list of orders
+}
+
+message OrderRequest {
+  string order_json = 1; // JSON representation of the trade request dict
+}
+
+message OrderActionResponse {
+  int32 retcode = 1;
+  string comment = 2;
+  int64 order = 3;
+  string result_json = 4; // Complete result dictionary serialized
+}
+
+message OrderCheckResponse {
+  int32 retcode = 1;
+  string comment = 2;
+  string result_json = 3;
+}
+
+message CalcProfitRequest {
+  int32 action = 1;
+  string symbol = 2;
+  double volume = 3;
+  double price_open = 4;
+  double price_close = 5;
+}
+
+message CalcMarginRequest {
+  int32 action = 1;
+  string symbol = 2;
+  double volume = 3;
+  double price = 4;
+}
+
+message CalcValueResponse {
+  double value = 1;
+}
+
+message LoginRequest {
+  int64 login = 1;
+  string password = 2;
+  string server = 3;
+}
+
+message HistoryRequest {
+  string date_from = 1;
+  string date_to = 2;
+  int64 ticket = 3;
+  string position = 4;
+}
+
+message HistoryDealsResponse {
+  string deals_json = 1;
+}
+
+message HistoryOrdersResponse {
+  string orders_json = 1;
+}
+
+message SymbolRequest {
+  string symbol = 1;
+}
+
+message SymbolSelectRequest {
+  string symbol = 1;
+  bool enable = 2;
+}
+
+message SymbolsRequest {
+  string group = 1;
+}
+
+message SymbolsResponse {
+  string symbols_json = 1;
+}
+
+message SymbolInfoResponse {
+  string info_json = 1;
+}
+
+message TickInfoResponse {
+  string tick_json = 1;
+}
+
+message TicksRangeRequest {
+  string symbol = 1;
+  string date_from = 2;
+  string date_to = 3;
+  uint32 flags = 4;
+}
+
+message TicksFromRequest {
+  string symbol = 1;
+  string date_from = 2;
+  uint32 count = 3;
+  uint32 flags = 4;
+}
+
+message TicksResponse {
+  string ticks_json = 1;
+}
+
+message RatesRangeRequest {
+  string symbol = 1;
+  int32 timeframe = 2;
+  string date_from = 3;
+  string date_to = 4;
+}
+
+message RatesFromPosRequest {
+  string symbol = 1;
+  int32 timeframe = 2;
+  int32 start_pos = 3;
+  int32 count = 4;
+}
+
+message RatesFromRequest {
+  string symbol = 1;
+  int32 timeframe = 2;
+  string date_from = 3;
+  int32 count = 4;
+}
+
+message RatesResponse {
+  string rates_json = 1;
+}
+
+message MarketBookResponse {
+  string items_json = 1;
+}
+
+message StartTerminalRequest {}
+
+message StopTerminalRequest {}
+
+message TerminalStatusRequest {}
+
+message TerminalStatusResponse {
+  string status = 1;
+  int32 pid = 2;
+  double cpu_percent = 3;
+  double memory_rss_mb = 4;
+}
+
+message TerminalLogsRequest {
+  int32 lines = 1;
+}
+
+message TerminalLogsResponse {
+  string file = 1;
+  int32 total_lines = 2;
+  int32 returned_lines = 3;
+  repeated string content = 4;
+}
+
+message DeployAssetRequest {
+  string asset_type = 1; // "ea", "indicator", "script", "include", "library"
+  string file_name = 2;
+  bytes file_content = 3;
+}
+
+message DeployAssetResponse {
+  bool success = 1;
+  string destination = 2;
+  string error = 3;
+}

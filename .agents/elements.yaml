@@ -1,0 +1,19 @@
+# Agentic Framework — Project Elements Manifest
+# This file declares all headquarter elements bound to this project.
+# Each entry is the element filename (without extension) or directory name.
+
+roles: []
+
+rules: []
+
+skills:
+  - markdown-structure
+  - stop-slop
+
+tools: []
+
+workflows: []
+
+mcp: []
+
+contexts: []

@@ -1,0 +1,47 @@
+version: "3.8"
+
+services:
+  market-node:
+    build:
+      context: .
+      dockerfile: apps/market-gateway/Dockerfile
+    image: savisor-market-node:latest
+    container_name: savisor-market-node
+    restart: unless-stopped
+    ports:
+      - "8000:8000"   # Market Gateway REST, WebSockets & Prometheus Telemetry (/metrics)
+      - "5900:5900"   # VNC Remote Desktop (MetaTrader 5 visual setup/auth)
+    environment:
+      - SAVISOR_API_KEY=${SAVISOR_API_KEY:-dev_savisor_secret_key_123}
+      - VNC_PASSWORD=${VNC_PASSWORD:-savisorpass}
+      
+      # Storage Backend Strategy: 'github' (Free CDN) | 's3' (Cloudflare R2 / AWS S3) | 'local'
+      - STORAGE_BACKEND=${STORAGE_BACKEND:-local}
+      
+      # GitHub Public Repo Storage Settings (Used when STORAGE_BACKEND=github)
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - GITHUB_REPO=${GITHUB_REPO:-}
+      - GITHUB_BRANCH=${GITHUB_BRANCH:-main}
+      - GITHUB_CDN_BASE_URL=${GITHUB_CDN_BASE_URL:-}
+      
+      # S3 / Cloudflare R2 Settings (Used when STORAGE_BACKEND=s3)
+      - S3_BUCKET_NAME=${S3_BUCKET_NAME:-savisor-market-data}
+      - S3_ENDPOINT_URL=${S3_ENDPOINT_URL:-}
+      - S3_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID:-}
+      - S3_SECRET_ACCESS_KEY=${S3_SECRET_ACCESS_KEY:-}
+      - S3_CDN_BASE_URL=${S3_CDN_BASE_URL:-}
+      
+      # Telemetry & Audit Logging Strategy: 'sqlite' | 'external' | 'both' | 'none'
+      - AUDIT_LOG_SINK=${AUDIT_LOG_SINK:-sqlite}
+      - AUDIT_EXTERNAL_ENDPOINT=${AUDIT_EXTERNAL_ENDPOINT:-}
+      - AUDIT_EXTERNAL_API_KEY=${AUDIT_EXTERNAL_API_KEY:-}
+
+      # Timezone & Wine Overrides
+      - TZ=UTC
+      - WINEDEBUG=-all
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s

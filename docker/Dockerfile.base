@@ -1,0 +1,171 @@
+# ==========================================
+# STAGE 1: Font Builder
+# ==========================================
+FROM alpine:latest AS font-builder
+
+RUN apk add --no-cache --repository http://dl-cdn.alpinelinux.org/alpine/edge/community \
+    msttcorefonts-installer \
+    && update-ms-fonts
+
+# ==========================================
+# STAGE 2: Python Builder (Offline Windows Packages)
+# ==========================================
+FROM alpine:latest AS python-builder
+
+RUN apk add --no-cache python3 py3-pip curl unzip
+
+# 1. Download and extract Windows Python embeddable
+RUN curl -L https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip -o /tmp/python.zip && \
+    mkdir -p /tmp/python/Lib/site-packages && \
+    unzip /tmp/python.zip -d /tmp/python && \
+    rm /tmp/python.zip
+
+# 2. Enable site-packages in Windows Python
+RUN sed -i 's/#import site/import site/' /tmp/python/python311._pth
+
+# 3. Download all required Windows amd64 wheels (including pip, setuptools, and wheel)
+RUN mkdir -p /tmp/wheels && \
+    pip download --dest /tmp/wheels \
+    --only-binary=:all: \
+    --platform win_amd64 \
+    --python-version 3.11 \
+    --implementation cp \
+    --abi cp311 \
+    grpcio grpcio-tools protobuf numpy pandas MetaTrader5 pip setuptools wheel tzdata pytz psutil
+
+# 4. Bootstrap pip, setuptools, and wheel offline by unzipping their wheels into site-packages
+RUN unzip -o /tmp/wheels/pip-*.whl -d /tmp/python/Lib/site-packages/ && \
+    unzip -o /tmp/wheels/setuptools-*.whl -d /tmp/python/Lib/site-packages/ && \
+    unzip -o /tmp/wheels/wheel-*.whl -d /tmp/python/Lib/site-packages/
+
+
+
+# ==========================================
+# STAGE 3: Go Supervisor Builder
+# ==========================================
+FROM golang:alpine AS supervisor-builder
+RUN apk add --no-cache git && \
+    git clone https://github.com/ochinchina/supervisord.git /src && \
+    cd /src && \
+    CGO_ENABLED=0 go build -ldflags "-s -w" -o /go/bin/supervisord
+
+
+
+# ==========================================
+# STAGE 4: Final Runtime Base Image
+# ==========================================
+FROM alpine:latest
+
+# Combine apk packages to reduce layer overhead (Removed curl, unzip, supervisor, python3)
+RUN apk add --no-cache --repository http://dl-cdn.alpinelinux.org/alpine/edge/community \
+    bash \
+    xvfb \
+    freetype \
+    fontconfig \
+    x11vnc \
+    wine \
+    gnutls \
+    ca-certificates \
+    tzdata \
+    xdotool \
+    libfaketime && \
+    rm -rf /usr/lib/wine/i386-windows
+
+# Copy the compiled Go supervisord binary
+COPY --from=supervisor-builder /go/bin/supervisord /usr/bin/supervisord
+
+# Set up user and environment variables for Wine
+ENV WINEPREFIX=/home/wine/.wine
+ENV WINEARCH=win64
+ENV DISPLAY=:1
+ENV WINEDLLOVERRIDES="mscoree,mshtml,winemenubuilder.exe=disabled"
+# Prevent Python from writing bytecode at runtime
+ENV PYTHONDONTWRITEBYTECODE=1
+# Globally silence verbose Wine logging
+ENV WINEDEBUG=-all
+
+# Create wine user and workspace
+RUN adduser -D -u 1000 wine && \
+    mkdir -p /home/wine/.wine && \
+    chown -R wine:wine /home/wine
+
+# Copy the compiled Microsoft fonts from Stage 1
+COPY --from=font-builder /usr/share/fonts/truetype/msttcorefonts/ /usr/share/fonts/truetype/msttcorefonts/
+
+# Rebuild font cache
+RUN fc-cache -f
+
+# Copy supervisord configuration and helper scripts
+COPY docker/supervisord.conf /etc/supervisord.conf
+COPY --chown=wine:wine docker/supervisord/startup_guard.sh /home/wine/startup_guard.sh
+COPY --chown=wine:wine docker/supervisord/vnc_passwd_setup.sh /home/wine/vnc_passwd_setup.sh
+COPY --chown=wine:wine docker/supervisord/entrypoint.sh /home/wine/entrypoint.sh
+COPY --chown=wine:wine docker/daemon/ /home/wine/.wine/drive_c/daemon/
+RUN chmod +x /home/wine/startup_guard.sh /home/wine/vnc_passwd_setup.sh /home/wine/entrypoint.sh
+
+# Copy portable MetaTrader 5 from host (redundant binaries are filtered by .dockerignore)
+COPY --chown=wine:wine MetaTrader5/ /home/wine/.wine/drive_c/MetaTrader5/
+
+# Configure system timezone name for Wine's timezone auto-detection
+RUN echo "UTC" > /etc/timezone
+
+# Clean up any pre-baked host-specific terminal license and account cache
+RUN rm -f /home/wine/.wine/drive_c/MetaTrader5/Config/terminal.lic \
+          /home/wine/.wine/drive_c/MetaTrader5/Config/accounts.dat
+
+# Create the VNC password directory and set permissions (run as root)
+RUN mkdir -p /home/wine/.vnc && \
+    chown -R wine:wine /home/wine/.vnc
+
+# Copy Python runtime base (from python-builder)
+COPY --chown=wine:wine --from=python-builder /tmp/python/ /home/wine/.wine/drive_c/python/
+
+# Copy certificate importer script
+COPY --chown=wine:wine docker/import_certs.py /home/wine/.wine/drive_c/import_certs.py
+
+# Single command layer: Run setup commands as wine user, then prune system and prefix files as root
+RUN --mount=type=bind,from=python-builder,source=/tmp/wheels,target=/home/wine/.wine/drive_c/wheels \
+    # 1. Run Wine initialization, registry setup, package installation, cert imports, and codegen as wine user
+    su -s /bin/bash wine -c 'wineboot --init && \
+        wine reg add "HKLM\\Software\\Microsoft\\Cryptography\\Defaults\\Provider Types\\Type 024" /v Name /t REG_SZ /d "Microsoft Enhanced RSA and AES Cryptographic Provider" /f && \
+        wine reg add "HKLM\\Software\\Microsoft\\Cryptography\\Defaults\\Provider Types\\Type 024" /v TypeName /t REG_SZ /d "RSA Full and AES" /f && \
+        wine reg add "HKLM\\Software\\Microsoft\\Cryptography\\Defaults\\Provider\\Microsoft Enhanced RSA and AES Cryptographic Provider" /v "Image Path" /t REG_SZ /d "rsaenh.dll" /f && \
+        wine reg add "HKLM\\Software\\Microsoft\\Cryptography\\Defaults\\Provider\\Microsoft Enhanced RSA and AES Cryptographic Provider" /v Type /t REG_DWORD /d 24 /f && \
+        wine reg add "HKLM\\Software\\Microsoft\\Cryptography\\Defaults\\Provider\\Microsoft Enhanced RSA and AES Cryptographic Provider" /v SigInFile /t REG_DWORD /d 0 /f && \
+        wine C:\\python\\python.exe -m pip install --no-cache-dir --no-index --find-links C:\\wheels \
+            grpcio grpcio-tools protobuf numpy pandas MetaTrader5 tzdata pytz psutil && \
+        wine C:\\python\\python.exe C:\\import_certs.py && \
+        wine C:\\python\\python.exe C:\\daemon\\codegen.py && \
+        wine C:\\python\\python.exe -m pip uninstall -y grpcio-tools && \
+        wineserver -w' && \
+    # 2. Reclaim ownership and delete cert script (now back as root)
+    rm -f /home/wine/.wine/drive_c/import_certs.py && \
+    # Remove Pip/Setuptools/Wheel files
+    rm -rf /home/wine/.wine/drive_c/python/Lib/site-packages/pip* \
+           /home/wine/.wine/drive_c/python/Lib/site-packages/setuptools* \
+           /home/wine/.wine/drive_c/python/Lib/site-packages/wheel* && \
+    # Remove test folders recursively
+    find /home/wine/.wine/drive_c/python/Lib/site-packages -type d \( -name "test" -o -name "tests" \) -exec rm -rf {} + && \
+    # Remove pycache recursively
+    find /home/wine/.wine/drive_c/python -type d -name "__pycache__" -exec rm -rf {} + && \
+    # Remove intermediate wineserver build-time socket files
+    rm -rf /tmp/.wine-1000 && \
+    # Insulate prefix by deleting container root traversal symlink
+    rm -f /home/wine/.wine/dosdevices/z: && \
+    # Disable LiveUpdate by blocking its directory in both the installation path and AppData
+    rm -rf /home/wine/.wine/drive_c/MetaTrader5/liveupdate && \
+    touch /home/wine/.wine/drive_c/MetaTrader5/liveupdate && \
+    chmod 444 /home/wine/.wine/drive_c/MetaTrader5/liveupdate && \
+    mkdir -p /home/wine/.wine/drive_c/users/wine/AppData/Roaming/MetaQuotes/Terminal/BF9336D047DCCACD9080FDBCE04D3DE5 && \
+    rm -rf /home/wine/.wine/drive_c/users/wine/AppData/Roaming/MetaQuotes/Terminal/BF9336D047DCCACD9080FDBCE04D3DE5/liveupdate && \
+    touch /home/wine/.wine/drive_c/users/wine/AppData/Roaming/MetaQuotes/Terminal/BF9336D047DCCACD9080FDBCE04D3DE5/liveupdate && \
+    chmod 444 /home/wine/.wine/drive_c/users/wine/AppData/Roaming/MetaQuotes/Terminal/BF9336D047DCCACD9080FDBCE04D3DE5/liveupdate
+
+
+# Switch to the wine user for container runtime execution
+USER wine
+WORKDIR /home/wine
+
+EXPOSE 5900 50051
+
+ENTRYPOINT ["/usr/bin/supervisord", "-c", "/etc/supervisord.conf"]

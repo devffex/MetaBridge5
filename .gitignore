@@ -1,0 +1,15 @@
+MetaTrader5
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.venv/
+.env
+.env.*
+!.env.example
+*.sqlite3
+
+*.sqlite3-wal
+*.sqlite3-shm
+*.tar.gz
+live_api_verification_results.json

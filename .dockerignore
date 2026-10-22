@@ -1,0 +1,25 @@
+# Git metadata
+.git
+.gitignore
+
+# Compilation caches
+.mypy_cache
+.pytest_cache
+.ruff_cache
+
+# Local Python Environments
+.venv
+venv
+
+# MetaTrader 5 Redundant Binaries and Assets
+MetaTrader5/MetaEditor64.exe
+MetaTrader5/metatester64.exe
+MetaTrader5/uninstall.exe
+MetaTrader5/Terminal.ico
+MetaTrader5/Sounds
+
+# MetaTrader 5 Runtime Caches
+MetaTrader5/Bases/Default/History
+MetaTrader5/Bases/Default/Mail
+MetaTrader5/Bases/Default/Symbols
+MetaTrader5/logs
