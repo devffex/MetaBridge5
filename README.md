@@ -214,7 +214,7 @@ sequenceDiagram
     actor Client as Web or Quant Client
     participant API as Market Gateway (:8000)
     participant C0 as Candle 0 Manager
-    participant Loop as 200ms Poll Task
+    participant Poller as 200ms Poll Task
     participant Daemon as gRPC Server (:50051)
     participant MT5 as MetaTrader 5 Terminal
 
@@ -224,13 +224,13 @@ sequenceDiagram
     API-->>Client: Send snapshot payload (M1 through D1)
 
     loop Every 200 Milliseconds
-        Loop->>Daemon: get_symbol_info_tick("EURUSD")
+        Poller->>Daemon: get_symbol_info_tick("EURUSD")
         activate Daemon
         Note over Daemon,MT5: Mutex lock acquired (thread safe)
         Daemon->>MT5: Native C API tick request
         MT5-->>Daemon: Return latest tick (bid, ask, time)
         deactivate Daemon
-        Loop->>C0: process_tick(symbol, tick)
+        Poller->>C0: process_tick(symbol, tick)
         C0->>C0: Recalculate open, high, low, close in RAM
         C0-->>API: Yield updated Candle 0 state
         API-->>Client: Broadcast live tick and Candle 0 updates
@@ -763,9 +763,9 @@ By default, Wine links the host root directory as `Z:\`. The container startup s
 
 * [Base Image Technical Guide](docker/README.md): Wine configuration, virtual display setup, and gRPC daemon mechanics.
 * [Market Gateway API Reference](apps/market-gateway/README.md): REST endpoints, WebSocket contracts, and storage backend details.
-* [Client Integration Recipes](docs/client_api.md): Integration examples for React TradingView charts, Python bots, and Polars.
+* [Client Integration Specification](../agents/specs/metabridge5/client-api/SPEC.md): Integration recipes for React TradingView charts, Python bots, and Polars.
 * [Asset Catalog](assets/README.md): Brand logos, vector files, favicons, and graphic specifications.
-* [Engineering Specifications](../agents/specs/metabridge5/README.md): Complete specifications for the base image and gateway.
+* [Engineering Specifications](../agents/specs/metabridge5/README.md): Complete specifications for base image, gateway, client API, and runtimes.
 
 ---
 
