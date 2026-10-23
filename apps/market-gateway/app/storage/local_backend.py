@@ -12,7 +12,7 @@ class LocalStorageBackend(StorageBackend):
     Used for local development, testing, and container disk staging.
     """
 
-    def __init__(self, base_dir: str = "/tmp/savisor_data", base_url: str = "http://localhost:8000/static"):
+    def __init__(self, base_dir: str = "/tmp/metabridge5_data", base_url: str = "http://localhost:8000/static"):
         self.base_dir = Path(base_dir)
         self.base_url = base_url.rstrip("/")
         self.base_dir.mkdir(parents=True, exist_ok=True)

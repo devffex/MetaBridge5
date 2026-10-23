@@ -1,5 +1,5 @@
 [project]
-name = "savisor-market-gateway"
+name = "metabridge5-market-gateway"
 version = "0.2.0"
 description = "High-performance real-time market data feed, Candle 0 engine, and historical data pipeline"
 readme = "README.md"

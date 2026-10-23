@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timedelta, timezone
 import logging
 import os
 from pathlib import Path
@@ -41,19 +42,19 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] [%(n
 logger = logging.getLogger("market_gateway")
 
 # Prometheus Metrics
-TICKS_PROCESSED_TOTAL = Counter("savisor_ticks_processed_total", "Total ticks processed", ["symbol"])
+TICKS_PROCESSED_TOTAL = Counter("metabridge5_ticks_processed_total", "Total ticks processed", ["symbol"])
 CANDLE0_UPDATES_TOTAL = Counter(
-    "savisor_candle0_updates_total", "Total Candle 0 updates computed", ["symbol", "timeframe"]
+    "metabridge5_candle0_updates_total", "Total Candle 0 updates computed", ["symbol", "timeframe"]
 )
 CANDLE0_CLOSES_TOTAL = Counter(
-    "savisor_candle0_closes_total", "Total candles closed and rolled up", ["symbol", "timeframe"]
+    "metabridge5_candle0_closes_total", "Total candles closed and rolled up", ["symbol", "timeframe"]
 )
-WS_CONNECTIONS_GAUGE = Gauge("savisor_ws_active_connections", "Active WebSocket connections", ["symbol"])
+WS_CONNECTIONS_GAUGE = Gauge("metabridge5_ws_active_connections", "Active WebSocket connections", ["symbol"])
 BACKFILL_DURATION_SECONDS = Histogram(
-    "savisor_backfill_duration_seconds", "Duration of backfill operations in seconds", ["symbol"]
+    "metabridge5_backfill_duration_seconds", "Duration of backfill operations in seconds", ["symbol"]
 )
-TICK_AGE_SECONDS = Gauge("savisor_symbol_tick_age_seconds", "Seconds elapsed since last price tick", ["symbol"])
-STUCK_JOBS_GAUGE = Gauge("savisor_stuck_pipeline_jobs_count", "Number of stuck non-terminal pipeline jobs")
+TICK_AGE_SECONDS = Gauge("metabridge5_symbol_tick_age_seconds", "Seconds elapsed since last price tick", ["symbol"])
+STUCK_JOBS_GAUGE = Gauge("metabridge5_stuck_pipeline_jobs_count", "Number of stuck non-terminal pipeline jobs")
 
 from contextlib import asynccontextmanager
 
@@ -81,10 +82,79 @@ async def get_fetch_lock(cache_key: tuple) -> asyncio.Lock:
 
 
 # ---------------------------------------------------------
+# Real-Time WebSocket Streaming Worker (Candle 0 & Live Ticks)
+# ---------------------------------------------------------
+async def poll_ticks_loop(symbol: str):
+    """
+    Background worker that polls MT5 ticks, feeds Candle0Manager,
+    and broadcasts live tick + Candle 0 states to subscribers.
+    """
+    logger.info(f"Starting background tick & Candle 0 poll loop for {symbol}...")
+    last_tick_time = 0
+    last_tick_bid = 0.0
+
+    try:
+        while True:
+            try:
+                if grpc_client:
+                    tick = grpc_client.get_symbol_info_tick(symbol)
+                    if tick:
+                        tick_time = tick.get("time", 0)
+                        bid = tick.get("bid", 0.0)
+
+                        if tick_time != last_tick_time or bid != last_tick_bid:
+                            last_tick_time = tick_time
+                            last_tick_bid = bid
+                            TICKS_PROCESSED_TOTAL.labels(symbol=symbol).inc()
+
+                            # Update in-memory Candle 0 state across all timeframes
+                            candle0_states = {}
+                            if candle_manager:
+                                candle0_states = await candle_manager.process_tick(symbol, tick)
+
+                            # Broadcast to active WebSockets
+                            websockets = symbol_subscriptions.get(symbol, set())
+                            if websockets:
+                                payload = {
+                                    "type": "tick",
+                                    "symbol": symbol,
+                                    "time": tick_time,
+                                    "bid": bid,
+                                    "ask": tick.get("ask", 0.0),
+                                    "last": tick.get("last", 0.0),
+                                    "volume": tick.get("volume", 0),
+                                    "candle0": {tf: state.to_compact_array() for tf, state in candle0_states.items()},
+                                }
+                                async with ws_lock:
+                                    dead_ws = set()
+                                    for ws in list(websockets):
+                                        try:
+                                            await ws.send_json(payload)
+                                        except Exception:
+                                            dead_ws.add(ws)
+                                    if dead_ws:
+                                        websockets.difference_update(dead_ws)
+                                        WS_CONNECTIONS_GAUGE.labels(symbol=symbol).set(len(websockets))
+
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.error(f"Error in tick polling loop for {symbol}: {e}")
+
+            # 200ms sleep for high-frequency sub-second tick tracking
+            await asyncio.sleep(0.20)
+
+    except asyncio.CancelledError:
+        pass
+    finally:
+        logger.info(f"Stopped background tick poll loop for {symbol}.")
+
+
+# ---------------------------------------------------------
 # Security Dependency
 # ---------------------------------------------------------
 def verify_api_key(x_api_key: str | None = Header(None)):
-    expected_key = os.environ.get("SAVISOR_API_KEY")
+    expected_key = os.environ.get("METABRIDGE5_API_KEY")
     if expected_key and x_api_key != expected_key:
         raise HTTPException(status_code=401, detail="Invalid or missing X-API-Key header")
     return x_api_key
@@ -94,9 +164,11 @@ def verify_api_key(x_api_key: str | None = Header(None)):
 # Pydantic Schemas
 # ---------------------------------------------------------
 class SymbolProvisionRequest(BaseModel):
-    symbol: str
-    auto_backfill: bool = True
-    candle_count: int = 100000
+    symbol: str = Field(..., description="Broker symbol to activate e.g. 'EURUSD'")
+    auto_backfill: bool = Field(True, description="Whether to trigger initial historical backfill upon activation")
+    candle_count: int = Field(100000, description="Max candles to backfill if days/dates are not specified")
+    days: int | None = Field(None, description="Number of past days to extract e.g. 30, 90, 365")
+    timeframes: list[str] | None = Field(None, description="List of timeframes e.g. ['M1', 'M5', 'H1', 'D1']")
 
 
 class SymbolProvisionResponse(BaseModel):
@@ -107,11 +179,15 @@ class SymbolProvisionResponse(BaseModel):
 
 
 class BackfillRequest(BaseModel):
-    symbol: str
-    timeframes: list[str] | None = None
-    candle_count: int = 100000
-    date_from: str | None = None
-    date_to: str | None = None
+    symbol: str | None = Field(None, description="Single asset symbol (e.g. 'EURUSD') or 'ALL' / '*' for all assets")
+    symbols: list[str] | None = Field(None, description="Explicit list of asset symbols e.g. ['EURUSD', 'GBPUSD']")
+    all_symbols: bool = Field(False, description="If true, backfills all active symbols or all broker catalog symbols")
+    source: str = Field("active", description="Asset source when all_symbols is True: 'active' (Market Watch) or 'broker' (entire catalog)")
+    timeframes: list[str] | None = Field(None, description="List of timeframes e.g. ['M1', 'M5', 'H1', 'D1']. Defaults to all 9 supported.")
+    candle_count: int = Field(100000, description="Max candles to fetch per timeframe if date range is not specified")
+    days: int | None = Field(None, description="Number of past days to extract e.g. 30, 90, 365. Automatically computes date_from and date_to.")
+    date_from: str | None = Field(None, description="ISO 8601 start date (e.g. '2024-01-01T00:00:00Z')")
+    date_to: str | None = Field(None, description="ISO 8601 end date (e.g. '2024-12-31T23:59:59Z')")
 
 
 class PipelineControlRequest(BaseModel):
@@ -137,7 +213,36 @@ async def lifespan(app: FastAPI):
     candle_manager.register_close_callback(backfill_worker.handle_candle_close)
     if audit_sink:
         audit_sink.record(AuditRecord(component="gateway", event="node_started", status="info"))
-    logger.info("Savisor Market Data Node started successfully.")
+    logger.info("MetaBridge5 Market Gateway started successfully.")
+
+    # Auto-provision boot symbols if configured via METABRIDGE5_SYMBOLS
+    boot_symbols_env = os.environ.get("METABRIDGE5_SYMBOLS", "").strip()
+    auto_backfill_start = os.environ.get("METABRIDGE5_AUTO_BACKFILL_ON_START", "false").lower() in ("true", "1", "yes")
+
+    symbols_to_init: list[str] = []
+    if boot_symbols_env:
+        if boot_symbols_env.upper() in ("*", "ALL", "ALL_ACTIVE"):
+            try:
+                active = grpc_client.get_symbols(selected_only=True)
+                symbols_to_init = [s.get("name") for s in active if s.get("name")]
+            except Exception as e:
+                logger.warning(f"Failed to query active symbols for startup: {e}")
+        else:
+            symbols_to_init = [s.strip().upper() for s in boot_symbols_env.split(",") if s.strip()]
+
+    for sym in symbols_to_init:
+        try:
+            grpc_client.select_symbol(sym, True)
+            if sym not in active_poll_tasks:
+                task = asyncio.create_task(poll_ticks_loop(sym))
+                active_poll_tasks[sym] = task
+                logger.info(f"Initialized live tick streaming for startup symbol {sym}")
+            if auto_backfill_start and backfill_worker:
+                asyncio.create_task(backfill_worker.run_initial_backfill(symbol=sym))
+                logger.info(f"Queued startup historical backfill for {sym}")
+        except Exception as e:
+            logger.warning(f"Could not initialize startup symbol {sym}: {e}")
+
     yield
     # Shutdown logic
     for symbol, task in active_poll_tasks.items():
@@ -148,11 +253,11 @@ async def lifespan(app: FastAPI):
     if audit_sink:
         audit_sink.record(AuditRecord(component="gateway", event="node_stopped", status="info"))
         audit_sink.close()
-    logger.info("Savisor Market Data Node stopped.")
+    logger.info("MetaBridge5 Market Gateway stopped.")
 
 
 app = FastAPI(
-    title="Savisor Market Data Node",
+    title="MetaBridge5 Market Gateway",
     description="Autonomous real-time market data feed, Candle 0 engine, and historical data pipeline for MetaTrader 5",
     version="2.0.0",
     lifespan=lifespan,
@@ -183,7 +288,7 @@ def health_check():
     daemon_health = grpc_client.get_health()
     return {
         "status": "ok" if daemon_health.get("status") == "ok" else "degraded",
-        "node": "savisor-node",
+        "node": "metabridge5-node",
         "storage": type(storage_backend).__name__ if storage_backend else "none",
         "daemon": daemon_health,
     }
@@ -304,27 +409,67 @@ async def trigger_backfill(
     payload: BackfillRequest,
     background_tasks: BackgroundTasks,
 ):
-    """Triggers an on-demand historical backfill for the specified asset across timeframes."""
+    """Triggers an on-demand historical backfill for single, multiple, or all available assets across timeframes."""
     if not backfill_worker:
         raise HTTPException(status_code=500, detail="Backfill worker uninitialized")
 
-    symbol = payload.symbol.upper()
+    # 1. Resolve Target Asset Symbols
+    target_symbols: list[str] = []
+    if payload.all_symbols or (payload.symbol and payload.symbol.upper() in ("ALL", "*")):
+        if payload.source == "broker":
+            broker_syms = grpc_client.get_symbols() if grpc_client else []
+            target_symbols = [s.get("name") for s in broker_syms if s.get("name")]
+        else:
+            active_syms = grpc_client.get_symbols(selected_only=True) if grpc_client else []
+            target_symbols = [s.get("name") for s in active_syms if s.get("name")]
+    elif payload.symbols:
+        target_symbols = [s.strip().upper() for s in payload.symbols if s.strip()]
+    elif payload.symbol:
+        target_symbols = [payload.symbol.strip().upper()]
+    else:
+        # Default to all active symbols currently enabled in MT5 Market Watch
+        active_syms = grpc_client.get_symbols(selected_only=True) if grpc_client else []
+        target_symbols = [s.get("name") for s in active_syms if s.get("name")]
 
+    if not target_symbols:
+        raise HTTPException(
+            status_code=400,
+            detail="No symbols resolved for backfill. Please specify 'symbol', 'symbols', or ensure active symbols exist in Market Watch.",
+        )
+
+    # 2. Resolve Date Range / Relative Days
+    resolved_date_from = payload.date_from
+    resolved_date_to = payload.date_to
+    if payload.days and payload.days > 0:
+        now = datetime.now(timezone.utc)
+        resolved_date_to = payload.date_to or now.strftime("%Y-%m-%dT%H:%M:%SZ")
+        resolved_date_from = (now - timedelta(days=payload.days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    resolved_timeframes = payload.timeframes or backfill_worker.timeframes
+
+    # 3. Queue Background Ingestion Tasks
     async def _do_backfill():
-        with BACKFILL_DURATION_SECONDS.labels(symbol=symbol).time():
-            await backfill_worker.run_initial_backfill(
-                symbol=symbol,
-                timeframes=payload.timeframes,
-                candle_count=payload.candle_count,
-                date_from=payload.date_from,
-                date_to=payload.date_to,
-            )
+        for sym in target_symbols:
+            with BACKFILL_DURATION_SECONDS.labels(symbol=sym).time():
+                await backfill_worker.run_initial_backfill(
+                    symbol=sym,
+                    timeframes=resolved_timeframes,
+                    candle_count=payload.candle_count,
+                    date_from=resolved_date_from,
+                    date_to=resolved_date_to,
+                )
 
     background_tasks.add_task(_do_backfill)
     return {
         "status": "triggered",
-        "symbol": symbol,
-        "message": f"Deep historical backfill queued for {symbol}",
+        "symbols": target_symbols,
+        "total_symbols": len(target_symbols),
+        "timeframes": resolved_timeframes,
+        "days": payload.days,
+        "date_from": resolved_date_from,
+        "date_to": resolved_date_to,
+        "candle_count": payload.candle_count if not (resolved_date_from and resolved_date_to) else None,
+        "message": f"Historical backfill queued for {len(target_symbols)} asset(s) across {len(resolved_timeframes)} timeframe(s).",
     }
 
 
@@ -601,10 +746,20 @@ async def add_active_symbol(
         backfill_status = "not_requested"
         if payload.auto_backfill and backfill_worker:
             backfill_status = "queued"
+            resolved_date_from = None
+            resolved_date_to = None
+            if payload.days and payload.days > 0:
+                now = datetime.now(timezone.utc)
+                resolved_date_to = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+                resolved_date_from = (now - timedelta(days=payload.days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
             background_tasks.add_task(
                 backfill_worker.run_initial_backfill,
                 symbol=symbol,
+                timeframes=payload.timeframes,
                 candle_count=payload.candle_count,
+                date_from=resolved_date_from,
+                date_to=resolved_date_to,
             )
 
         # Start live background polling task if not active
@@ -648,70 +803,6 @@ def remove_active_symbol(symbol: str):
 # ---------------------------------------------------------
 # Real-Time WebSocket Streaming (Candle 0 & Live Ticks)
 # ---------------------------------------------------------
-async def poll_ticks_loop(symbol: str):
-    """
-    Background worker that polls MT5 ticks, feeds Candle0Manager,
-    and broadcasts live tick + Candle 0 states to subscribers.
-    """
-    logger.info(f"Starting background tick & Candle 0 poll loop for {symbol}...")
-    last_tick_time = 0
-    last_tick_bid = 0.0
-
-    try:
-        while True:
-            try:
-                tick = grpc_client.get_symbol_info_tick(symbol)
-                if tick:
-                    tick_time = tick.get("time", 0)
-                    bid = tick.get("bid", 0.0)
-
-                    if tick_time != last_tick_time or bid != last_tick_bid:
-                        last_tick_time = tick_time
-                        last_tick_bid = bid
-                        TICKS_PROCESSED_TOTAL.labels(symbol=symbol).inc()
-
-                        # Update in-memory Candle 0 state across all timeframes
-                        candle0_states = {}
-                        if candle_manager:
-                            candle0_states = await candle_manager.process_tick(symbol, tick)
-
-                        # Broadcast to active WebSockets
-                        websockets = symbol_subscriptions.get(symbol, set())
-                        if websockets:
-                            payload = {
-                                "type": "tick",
-                                "symbol": symbol,
-                                "time": tick_time,
-                                "bid": bid,
-                                "ask": tick.get("ask", 0.0),
-                                "last": tick.get("last", 0.0),
-                                "volume": tick.get("volume", 0),
-                                "candle0": {tf: state.to_compact_array() for tf, state in candle0_states.items()},
-                            }
-                            async with ws_lock:
-                                dead_ws = set()
-                                for ws in list(websockets):
-                                    try:
-                                        await ws.send_json(payload)
-                                    except Exception:
-                                        dead_ws.add(ws)
-                                if dead_ws:
-                                    websockets.difference_update(dead_ws)
-                                    WS_CONNECTIONS_GAUGE.labels(symbol=symbol).set(len(websockets))
-
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:
-                logger.error(f"Error in tick polling loop for {symbol}: {e}")
-
-            # 200ms sleep for high-frequency sub-second tick tracking
-            await asyncio.sleep(0.20)
-
-    except asyncio.CancelledError:
-        pass
-    finally:
-        logger.info(f"Stopped background tick poll loop for {symbol}.")
-
 
 @app.websocket("/api/v1/market/ws/{symbol}")
 @app.websocket("/api/v1/chart/ws/{symbol}")

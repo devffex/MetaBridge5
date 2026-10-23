@@ -87,7 +87,7 @@ class BackfillWorker:
         self.storage = storage_backend
         self.audit_sink = audit_sink
         self.timeframes = default_timeframes or ["M1", "M5", "M15", "M30", "H1", "H4", "D1", "W1", "MN1"]
-        raw_interval = sync_interval or os.environ.get("SAVISOR_SYNC_INTERVAL", "D1")
+        raw_interval = sync_interval or os.environ.get("METABRIDGE5_SYNC_INTERVAL", "D1")
         self.sync_interval = self.normalize_interval(raw_interval)
         # Symbol sync locks to avoid concurrent writes to the same dataset partition
         self._sync_locks: dict[str, asyncio.Lock] = {}

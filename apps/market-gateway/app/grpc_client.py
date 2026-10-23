@@ -16,7 +16,7 @@ logger = logging.getLogger("market_gateway.grpc_client")
 class TerminalGRPCClient:
     def __init__(self):
         server_address = os.environ.get("MT5_GRPC_SERVER", "127.0.0.1:50051")
-        self.api_key = os.environ.get("SAVISOR_API_KEY", "")
+        self.api_key = os.environ.get("METABRIDGE5_API_KEY", "")
 
         logger.info(f"Connecting to MT5 gRPC server at {server_address}...")
         options = [
@@ -89,11 +89,14 @@ class TerminalGRPCClient:
             logger.error(f"Failed to get tick info for {symbol}: {e}")
             raise
 
-    def get_symbols(self, group: str = ""):
+    def get_symbols(self, group: str = "", selected_only: bool = False):
         try:
             req = terminal_pb2.SymbolsRequest(group=group)
             res = self.stub.GetSymbols(req, metadata=self._get_metadata(), timeout=30)
-            return json.loads(res.symbols_json)
+            symbols = json.loads(res.symbols_json)
+            if selected_only:
+                return [s for s in symbols if s.get("visible") or s.get("select")]
+            return symbols
         except Exception as e:
             logger.error(f"Failed to get symbols: {e}")
             raise

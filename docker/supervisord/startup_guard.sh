@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------
-# Startup guard — validates that all required secrets are present
-# before any service starts.  If any variable is missing, the
+# Startup guard - validates that all required secrets are present
+# before any service starts. If any variable is missing, the
 # script exits non-zero which causes supervisord to halt.
 # ---------------------------------------------------------------
 set -euo pipefail
 
 errors=0
 
-if [ -z "${SAVISOR_API_KEY:-}" ]; then
-    echo "FATAL: SAVISOR_API_KEY environment variable is not set." >&2
+RESOLVED_API_KEY="${METABRIDGE5_API_KEY:-}"
+
+if [ -z "${RESOLVED_API_KEY}" ]; then
+    echo "FATAL: METABRIDGE5_API_KEY environment variable is not set." >&2
     errors=$((errors + 1))
 fi
 
@@ -23,4 +25,4 @@ if [ "$errors" -gt 0 ]; then
     exit 1
 fi
 
-echo "Startup guard passed — all required secrets are present."
+echo "Startup guard passed - all required secrets are present."

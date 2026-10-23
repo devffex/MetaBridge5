@@ -1,6 +1,6 @@
-# Savisor Market Node
+# MetaBridge5 Market Gateway
 
-The **Savisor Market Node** is an autonomous, containerized financial data collection, real-time in-flight **Candle 0** engine, and historical dataset pipeline designed for MetaTrader 5 broker terminals.
+The **MetaBridge5 Market Gateway** is an autonomous, containerized financial data collection, real-time in-flight **Candle 0** engine, and historical dataset pipeline designed for MetaTrader 5 broker terminals.
 
 It runs inside a containerized Wine runtime alongside a high-throughput FastAPI/WebSocket server and automated pipeline workers managed by supervisord.
 
@@ -14,7 +14,7 @@ flowchart TD
         TradeServer[("Broker Trade Server")]
     end
 
-    subgraph ContainerNode ["Savisor Market Node (Docker Container)"]
+    subgraph ContainerNode ["MetaBridge5 Market Gateway (Docker Container)"]
         subgraph VirtualizationLayer ["Wine Virtualization & MT5 Daemon"]
             MT5Terminal["MetaTrader 5 Terminal (terminal64.exe)"]
             SafeLock["SafeMT5Lock (Mutual Exclusion Mutex)"]
@@ -34,7 +34,7 @@ flowchart TD
         end
 
         subgraph LocalTelemetry ["Local Audit & Telemetry"]
-            SQLiteWAL[("SQLite WAL DB (/tmp/savisor_traces.sqlite3)")]
+            SQLiteWAL[("SQLite WAL DB (/tmp/metabridge5_traces.sqlite3)")]
         end
     end
 
@@ -98,11 +98,11 @@ Configure your environment inside `apps/market-gateway/.env` (no production secr
 
 ```ini
 # ==============================================================================
-# Savisor Market Node Configuration (.env)
+# MetaBridge5 Market Gateway Configuration (.env)
 # ==============================================================================
 
 # 1. API Security & VNC Password
-SAVISOR_API_KEY=your_secret_api_key_here
+METABRIDGE5_API_KEY=your_secret_api_key_here
 VNC_PASSWORD=your_vnc_password_here
 
 # 2. MT5 gRPC Daemon Connection
@@ -127,7 +127,7 @@ S3_CDN_BASE_URL=https://data.yourdomain.com
 
 # 6. Audit & Telemetry Configuration ('sqlite' | 'external' | 'both' | 'none')
 AUDIT_LOG_SINK=sqlite
-AUDIT_SQLITE_PATH=/tmp/savisor_traces.sqlite3
+AUDIT_SQLITE_PATH=/tmp/metabridge5_traces.sqlite3
 AUDIT_EXTERNAL_URL=http://telemetry.internal/api/v1/traces
 
 # 7. Mock Mode (1 = Enable offline synthetic data without MT5 terminal)
@@ -148,25 +148,25 @@ To preserve your broker login across container updates without re-entering passw
 
 ```bash
 # 1. Create a persistent named volume
-docker volume create savisor_mt5_data
+docker volume create metabridge5_mt5_data
 
 # 2. Build local images from monorepo root
 make build-base
 make build-market-node
 
 # 3. Launch container with volume attached (foreground live logs)
-docker run -it --rm --name savisor-market-node \
+docker run -it --rm --name metabridge5-market-node \
   -p 8000:8000 \
   -p 5900:5900 \
-  -v savisor_mt5_data:/home/wine/.wine/drive_c/MetaTrader5 \
-  -e SAVISOR_API_KEY="your_secret_api_key_here" \
+  -v metabridge5_mt5_data:/home/wine/.wine/drive_c/MetaTrader5 \
+  -e METABRIDGE5_API_KEY="your_secret_api_key_here" \
   -e VNC_PASSWORD="your_vnc_password_here" \
   -e STORAGE_BACKEND="github" \
   -e GITHUB_TOKEN="ghp_yourPersonalAccessTokenHere" \
   -e GITHUB_REPO="your_organization/your_dataset_repo" \
   -e GITHUB_BRANCH="main" \
   -e AUDIT_LOG_SINK="sqlite" \
-  savisor-market-node:latest
+  metabridge5-market-node:latest
 ```
 
 👉 **Authentication & Session Persistence Guide**: [Docker Named Volume Authentication Manual](docs/authentication_persistence.md)
@@ -198,7 +198,7 @@ docker run -it --rm --name savisor-market-node \
 | **Pipeline Health Monitor** | `curl -s -H "X-API-Key: ..." http://localhost:8000/api/v1/pipeline/health` | Pure-verdict evaluator checking price feed freshness and detecting stuck jobs. |
 | **Live SSE Telemetry Stream** | `curl -N http://localhost:8000/api/v1/telemetry/stream` | Real-time Server-Sent Events stream yielding NDJSON events for every candle rollup. |
 | **Prometheus Metrics** | `curl -s http://localhost:8000/metrics` | Asks *"What are the tick counters, active WebSocket connections, and latency histograms?"* |
-| **Process Inspection** | `docker top savisor-market-node` | Asks *"Are all 6 internal processes (Supervisord, Wine, MT5, gRPC, Uvicorn, Xvfb) active in RAM?"* |
+| **Process Inspection** | `docker top metabridge5-market-node` | Asks *"Are all 6 internal processes (Supervisord, Wine, MT5, gRPC, Uvicorn, Xvfb) active in RAM?"* |
 
 ### Granular & Exclusionary Ingestion Controls
 ```bash
@@ -252,20 +252,20 @@ When applying code changes, fixes, or new endpoints, redeploy the running contai
 
 ```bash
 make build-market-node && \
-docker rm -f savisor-market-node && \
-docker run -d --name savisor-market-node \
+docker rm -f metabridge5-market-node && \
+docker run -d --name metabridge5-market-node \
   -p 8000:8000 \
   -p 5900:5900 \
-  -v savisor_mt5_data:/home/wine/.wine \
-  --env-file /home/julio/Work/savisor/savisor-node/apps/market-gateway/.env \
-  savisor-market-node:latest
+  -v metabridge5_mt5_data:/home/wine/.wine \
+  --env-file apps/market-gateway/.env \
+  metabridge5-market-node:latest
 ```
 
 ---
 
 ## 7. Software Engineering & Testing Standards
 
-The Savisor Market Node implements enterprise backend design patterns and a comprehensive 12-perspective unit testing engine:
+The MetaBridge5 Market Gateway implements enterprise backend design patterns and a comprehensive 12-perspective unit testing engine:
 
 * **Backend Design Patterns Applied**:
   * **Factory & Strategy**: `StorageFactory` and `StorageBackend` strategies (`GitHub`, `S3`, `Local`).

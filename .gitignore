@@ -13,3 +13,4 @@ __pycache__/
 *.sqlite3-shm
 *.tar.gz
 live_api_verification_results.json
+.zed/

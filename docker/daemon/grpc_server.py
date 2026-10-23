@@ -404,7 +404,7 @@ class TerminalServiceServicer(terminal_pb2_grpc.TerminalServiceServicer):
                 )
 
     def GetHealth(self, request, context):
-        return terminal_pb2.HealthResponse(status="ok", service="savisor-node-daemon")
+        return terminal_pb2.HealthResponse(status="ok", service="metabridge5-node-daemon")
 
     def GetTerminalInfo(self, request, context):
         with mt5_lock:
@@ -937,13 +937,13 @@ class TerminalServiceServicer(terminal_pb2_grpc.TerminalServiceServicer):
 
 
 def serve(port: int = 50051):
-    api_key = os.environ.get("SAVISOR_API_KEY")
+    api_key = os.environ.get("METABRIDGE5_API_KEY")
     interceptors = []
     if api_key:
         logger.info("Enabling API Key authentication interceptor")
         interceptors.append(APIKeyAuthInterceptor(api_key))
     else:
-        logger.warning("SAVISOR_API_KEY environment variable not set. API Key authentication is DISABLED.")
+        logger.warning("METABRIDGE5_API_KEY environment variable not set. API Key authentication is DISABLED.")
 
     options = [
         ("grpc.max_send_message_length", 64 * 1024 * 1024),

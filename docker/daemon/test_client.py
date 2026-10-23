@@ -13,7 +13,7 @@ def test(server_address: str = "localhost:50051"):
     print(f"Connecting to gRPC server at {server_address}...")
     
     # Retrieve api key from environment or use test fallback
-    api_key = os.environ.get("SAVISOR_API_KEY", "test-api-key")
+    api_key = os.environ.get("METABRIDGE5_API_KEY", "test-api-key")
     metadata = [("x-api-key", api_key)]
     
     with grpc.insecure_channel(server_address) as channel:

@@ -1,6 +1,6 @@
 # Client Integration Guide
 
-This guide provides integration recipes for integrating web charts, algorithmic trading bots, and machine learning pipelines with the Savisor Market Node.
+This guide provides integration recipes for integrating web charts, algorithmic trading bots, and machine learning pipelines with the MetaBridge5 Market Gateway.
 
 ---
 

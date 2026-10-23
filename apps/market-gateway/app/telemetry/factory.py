@@ -49,7 +49,7 @@ class AuditLoggerFactory:
         elif selected == "external":
             sink = ExternalDatabaseAuditSink(**kwargs)
         elif selected in ("both", "composite"):
-            sqlite_sink = SQLiteAuditSink(db_path=kwargs.get("db_path", "/tmp/savisor_traces.sqlite3"))
+            sqlite_sink = SQLiteAuditSink(db_path=kwargs.get("db_path", "/tmp/metabridge5_traces.sqlite3"))
             external_sink = ExternalDatabaseAuditSink(
                 endpoint_url=kwargs.get("endpoint_url"),
                 api_key=kwargs.get("api_key"),

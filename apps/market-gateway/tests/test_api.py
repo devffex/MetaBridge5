@@ -6,7 +6,7 @@ from fastapi import WebSocketDisconnect
 from starlette.testclient import TestClient
 
 # Set API key for testing
-os.environ["SAVISOR_API_KEY"] = "test_key_123"
+os.environ["METABRIDGE5_API_KEY"] = "test_key_123"
 
 import app.main as main_mod
 from app.main import app
@@ -24,6 +24,18 @@ def client():
     mock_grpc.select_symbol.return_value = True
     mock_grpc.get_symbol_info_tick.return_value = None
 
+    def mock_get_symbols(group="", selected_only=False):
+        all_syms = [
+            {"name": "EURUSD", "visible": True, "select": True},
+            {"name": "GBPUSD", "visible": True, "select": True},
+            {"name": "USDJPY", "visible": False, "select": False},
+        ]
+        if selected_only:
+            return [s for s in all_syms if s.get("visible") or s.get("select")]
+        return all_syms
+
+    mock_grpc.get_symbols.side_effect = mock_get_symbols
+
     with patch.object(main_mod, "grpc_client", mock_grpc), TestClient(app) as c:
         # Re-ensure mock grpc client after lifespan startup
         main_mod.grpc_client = mock_grpc
@@ -37,13 +49,13 @@ def test_health_endpoint(client):
     assert res.status_code == 200
     data = res.json()
     assert "node" in data
-    assert data["node"] == "savisor-node"
+    assert data["node"] == "metabridge5-node"
 
 
 def test_metrics_endpoint(client):
     res = client.get("/metrics")
     assert res.status_code == 200
-    assert "savisor_ticks_processed_total" in res.text
+    assert "metabridge5_ticks_processed_total" in res.text
 
 
 def test_ready_endpoint(client):
@@ -297,3 +309,76 @@ def test_pipeline_sync_interval_endpoints(client):
 
     # Reset back to D1
     client.post("/api/v1/pipeline/interval?interval=D1", headers={"X-API-Key": "test_key_123"})
+
+
+def test_pipeline_backfill_single_symbol(client):
+    res = client.post(
+        "/api/v1/pipeline/backfill",
+        json={"symbol": "EURUSD", "candle_count": 5000},
+        headers={"X-API-Key": "test_key_123"},
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "triggered"
+    assert data["symbols"] == ["EURUSD"]
+    assert data["total_symbols"] == 1
+
+
+def test_pipeline_backfill_multiple_symbols(client):
+    res = client.post(
+        "/api/v1/pipeline/backfill",
+        json={"symbols": ["EURUSD", "GBPUSD"], "timeframes": ["M1", "H1"]},
+        headers={"X-API-Key": "test_key_123"},
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "triggered"
+    assert data["symbols"] == ["EURUSD", "GBPUSD"]
+    assert data["total_symbols"] == 2
+    assert data["timeframes"] == ["M1", "H1"]
+
+
+def test_pipeline_backfill_all_symbols_active(client):
+    # Tests all_symbols=True defaults to active Market Watch symbols (EURUSD, GBPUSD)
+    res = client.post(
+        "/api/v1/pipeline/backfill",
+        json={"all_symbols": True},
+        headers={"X-API-Key": "test_key_123"},
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "triggered"
+    assert "EURUSD" in data["symbols"]
+    assert "GBPUSD" in data["symbols"]
+    assert data["total_symbols"] == 2
+
+
+def test_pipeline_backfill_all_symbols_broker(client):
+    # Tests all_symbols=True with source="broker" returns all broker catalog symbols (EURUSD, GBPUSD, USDJPY)
+    res = client.post(
+        "/api/v1/pipeline/backfill",
+        json={"all_symbols": True, "source": "broker"},
+        headers={"X-API-Key": "test_key_123"},
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "triggered"
+    assert set(data["symbols"]) == {"EURUSD", "GBPUSD", "USDJPY"}
+    assert data["total_symbols"] == 3
+
+
+def test_pipeline_backfill_days_relative_calculation(client):
+    res = client.post(
+        "/api/v1/pipeline/backfill",
+        json={"symbol": "EURUSD", "days": 30},
+        headers={"X-API-Key": "test_key_123"},
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "triggered"
+    assert data["days"] == 30
+    assert data["date_from"] is not None
+    assert data["date_to"] is not None
+    assert "T" in data["date_from"]
+    assert "T" in data["date_to"]
+

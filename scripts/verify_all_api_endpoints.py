@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Comprehensive Live API Verification Suite for Savisor Market Node.
+Comprehensive Live API Verification Suite for MetaBridge5 Market Gateway.
 Executes requests against all 19 REST and WebSocket endpoints.
 """
 
@@ -163,7 +163,7 @@ async def run_all_tests():
     print("=" * 70)
 
 
-    with open("/home/julio/Work/savisor/savisor-node/live_api_verification_results.json", "w") as f:
+    with open("live_api_verification_results.json", "w") as f:
         json.dump(report_items, f, indent=2)
 
 if __name__ == "__main__":

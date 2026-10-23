@@ -17,7 +17,7 @@ class SQLiteAuditSink(AuditSink):
     Provides ultra-fast, local, zero-overhead storage for pipeline operations.
     """
 
-    def __init__(self, db_path: str = "/tmp/savisor_traces.sqlite3"):
+    def __init__(self, db_path: str = "/tmp/metabridge5_traces.sqlite3"):
         self.db_path = Path(db_path)
         self._local = threading.local()
         self._lock = threading.Lock()

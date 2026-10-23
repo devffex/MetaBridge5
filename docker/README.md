@@ -1,10 +1,10 @@
-# Savisor Base Docker Image (`savisor-base`)
+# metabridge5 Base Docker Image (`metabridge5-base`)
 
-The **Savisor Base Image** is the **Tier 1 Base Docker Image** of this codebase. It provides the unique foundational container environment for running MetaTrader 5 inside Wine and exposes a thread-safe **MT5 gRPC Bridge Daemon** on port `50051`.
+The **MetaBridge5 Base Image** is the **Tier 1 Base Docker Image** of this codebase. It provides the unique foundational container environment for running MetaTrader 5 inside Wine and exposes a thread-safe **MT5 gRPC Bridge Daemon** on port `50051`.
 
 > [!IMPORTANT]
 > **Foundation Layer — Zero Application Code**:
-> This base image contains **no business logic or application code**. It is the shared base layer used to build any Tier 2 specialized service images (such as `savisor-market-node`).
+> This base image contains **no business logic or application code**. It is the shared base layer used to build any Tier 2 specialized service images (such as `metabridge5-market-node`).
 
 ---
 
@@ -12,7 +12,7 @@ The **Savisor Base Image** is the **Tier 1 Base Docker Image** of this codebase.
 
 ```mermaid
 flowchart TD
-    subgraph Tier1 ["Tier 1: Base Docker Image (savisor-base:latest)"]
+    subgraph Tier1 ["Tier 1: Base Docker Image (metabridge5-base:latest)"]
         direction TB
         AlpineOS["Alpine Linux Container"]
         WineRuntime["Wine 64-bit + Xvfb (:1) + x11vnc (:5900)"]
@@ -31,18 +31,18 @@ flowchart TD
 
     subgraph Tier2 ["Tier 2: Purpose-Built Service Images (Built on Tier 1)"]
         direction TB
-        MarketNode["apps/market-gateway (savisor-market-node)<br/>• Real-Time WebSocket Streaming<br/>• In-Flight Candle 0 Engine<br/>• Automated Historical Parquet Backfill"]
+        MarketNode["apps/market-gateway (metabridge5-market-node)<br/>• Real-Time WebSocket Streaming<br/>• In-Flight Candle 0 Engine<br/>• Automated Historical Parquet Backfill"]
         FutureNode1["apps/execution-node (Future Tier 2)<br/>• Dedicated Order Routing & Execution"]
         FutureNode2["apps/analytics-node (Future Tier 2)<br/>• Dedicated Machine Learning & Indicator Processing"]
     end
 
-    Tier1 -->|"FROM savisor-base:latest"| MarketNode
-    Tier1 -->|"FROM savisor-base:latest"| FutureNode1
-    Tier1 -->|"FROM savisor-base:latest"| FutureNode2
+    Tier1 -->|"FROM metabridge5-base:latest"| MarketNode
+    Tier1 -->|"FROM metabridge5-base:latest"| FutureNode1
+    Tier1 -->|"FROM metabridge5-base:latest"| FutureNode2
 ```
 
 ### Deployment Model: Isolated Server Per Tier 2 Image
-Each Tier 2 image is built on top of `savisor-base` and is deployed into **its own dedicated, isolated server**:
+Each Tier 2 image is built on top of `metabridge5-base` and is deployed into **its own dedicated, isolated server**:
 - **Independent Lifecycles**: Redeploying or modifying a Tier 2 image does not rebuild or impact other images.
 - **Isolated MT5 Instances**: Each deployed server runs its own containerized MT5 terminal session connected to its specific broker account.
 - **Zero Resource Contention**: Each server dedicates its RAM and CPU entirely to that specific service's workload.
@@ -51,7 +51,7 @@ Each Tier 2 image is built on top of `savisor-base` and is deployed into **its o
 
 ## 2. Multi-Stage Build Pipeline
 
-[`docker/Dockerfile.base`](file:///home/julio/Work/savisor/savisor-node/docker/Dockerfile.base) uses a 4-stage build to produce a minimal, self-contained base image:
+[`docker/Dockerfile.base`](docker/Dockerfile.base) uses a 4-stage build to produce a minimal, self-contained base image:
 
 ```mermaid
 flowchart TD
@@ -132,7 +132,7 @@ To build a new specialized Tier 2 service image, create a folder under `apps/<im
 ### A. Dockerfile Pattern
 ```dockerfile
 # 1. Inherit from the base image
-FROM savisor-base:latest
+FROM metabridge5-base:latest
 
 USER root
 
@@ -179,5 +179,5 @@ stderr_logfile_maxbytes=0
 ```bash
 make build-base
 # Or directly:
-docker build -f docker/Dockerfile.base -t savisor-base:latest .
+docker build -f docker/Dockerfile.base -t metabridge5-base:latest .
 ```

@@ -26,7 +26,7 @@ DEFAULT_PARQUET_BATCH_ROWS = 25_000
 
 
 def parquet_batch_rows() -> int:
-    raw_val = os.getenv("SAVISOR_PARQUET_BATCH_ROWS")
+    raw_val = os.getenv("METABRIDGE5_PARQUET_BATCH_ROWS")
     if not raw_val:
         return DEFAULT_PARQUET_BATCH_ROWS
     try:
@@ -54,7 +54,7 @@ class StreamParquetSink:
         self.batch_rows = max(100, batch_rows or parquet_batch_rows())
         self._buffer: list[dict[str, Any]] = []
         self._all_rows: list[dict[str, Any]] = []
-        self._temp_dir = Path(tempfile.mkdtemp(prefix=f"savisor_sink_{self.symbol}_{self.timeframe}_"))
+        self._temp_dir = Path(tempfile.mkdtemp(prefix=f"metabridge5_sink_{self.symbol}_{self.timeframe}_"))
         self._chunk_paths: list[Path] = []
         self._closed = False
         self._start_time = time.time()

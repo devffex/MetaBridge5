@@ -1,6 +1,6 @@
 # Observability, Logs & Telemetry Guide
 
-This guide covers the 4 diagnostic and observability layers provided by the Savisor Market Node.
+This guide covers the 4 diagnostic and observability layers provided by the MetaBridge5 Market Gateway.
 
 ---
 
@@ -34,7 +34,7 @@ curl -s -H "X-API-Key: your_secret_api_key_here" \
 
 ## 2. Internal SQLite WAL Audit Traces (`GET /api/v1/telemetry/traces`)
 
-The node records lifecycle events, pipeline jobs, and operational metrics into an embedded SQLite database running in **WAL (Write-Ahead Logging)** mode (`/tmp/savisor_traces.sqlite3`), achieving microsecond write latency without blocking API traffic.
+The node records lifecycle events, pipeline jobs, and operational metrics into an embedded SQLite database running in **WAL (Write-Ahead Logging)** mode (`/tmp/metabridge5_traces.sqlite3`), achieving microsecond write latency without blocking API traffic.
 
 ```bash
 # Query recent audit traces for EURUSD
@@ -79,11 +79,11 @@ curl -s http://localhost:8000/metrics | head -n 30
 
 | Metric Name | Type | Description |
 |---|---|---|
-| `savisor_ticks_processed_total{symbol="EURUSD"}` | Counter | Total market price ticks processed. |
-| `savisor_candle0_updates_total{symbol="EURUSD", timeframe="M1"}` | Counter | In-flight Candle 0 updates performed. |
-| `savisor_candle0_closes_total{symbol="EURUSD", timeframe="M1"}` | Counter | Number of finalized candle rollover events. |
-| `savisor_active_ws_connections{symbol="EURUSD"}` | Gauge | Number of active connected WebSocket clients. |
-| `savisor_backfill_duration_seconds_bucket` | Histogram | Backfill pipeline latency distribution. |
+| `metabridge5_ticks_processed_total{symbol="EURUSD"}` | Counter | Total market price ticks processed. |
+| `metabridge5_candle0_updates_total{symbol="EURUSD", timeframe="M1"}` | Counter | In-flight Candle 0 updates performed. |
+| `metabridge5_candle0_closes_total{symbol="EURUSD", timeframe="M1"}` | Counter | Number of finalized candle rollover events. |
+| `metabridge5_active_ws_connections{symbol="EURUSD"}` | Gauge | Number of active connected WebSocket clients. |
+| `metabridge5_backfill_duration_seconds_bucket` | Histogram | Backfill pipeline latency distribution. |
 
 ## 4. Pure-Verdict Health Monitor (`GET /api/v1/pipeline/health`)
 
@@ -154,7 +154,7 @@ data: {"timestamp": 1787775715, "event": "pipeline_paused", "symbol": "EURUSD", 
 Verify that all internal Linux and Windows/Wine processes are active in RAM without needing an SSH shell:
 
 ```bash
-docker top savisor-market-node
+docker top metabridge5-market-node
 ```
 
 **Expected Processes**:

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <!-- MetaBridge5 Architectural Keystone Mark (Transparent Background) -->
+  <g id="metabridge5-logo">
+    <!-- Block 1: Left Pier (Electric Cyan) -->
+    <rect x="117" y="261" width="46" height="123" rx="4" fill="#00D2FF"/>
+    <!-- Block 2: Left Angular Span (Indigo) -->
+    <polygon points="117,249 198,151 221,203 163,249" fill="#5F69FD"/>
+    <!-- Block 3: Central Keystone (Cyan Inverted Trapezoid) -->
+    <polygon points="212,127 299,127 281,203 230,203" fill="#00D2FF"/>
+    <!-- Block 4: Right Angular Span (Indigo) -->
+    <polygon points="313,151 394,249 348,249 290,203" fill="#5F69FD"/>
+    <!-- Block 5: Right Pier (Electric Cyan) -->
+    <rect x="348" y="261" width="46" height="123" rx="4" fill="#00D2FF"/>
+  </g>
+</svg>

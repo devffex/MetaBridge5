@@ -5,15 +5,15 @@ services:
     build:
       context: .
       dockerfile: apps/market-gateway/Dockerfile
-    image: savisor-market-node:latest
-    container_name: savisor-market-node
+    image: metabridge5-market-node:latest
+    container_name: metabridge5-market-node
     restart: unless-stopped
     ports:
       - "8000:8000"   # Market Gateway REST, WebSockets & Prometheus Telemetry (/metrics)
       - "5900:5900"   # VNC Remote Desktop (MetaTrader 5 visual setup/auth)
     environment:
-      - SAVISOR_API_KEY=${SAVISOR_API_KEY:-dev_savisor_secret_key_123}
-      - VNC_PASSWORD=${VNC_PASSWORD:-savisorpass}
+      - METABRIDGE5_API_KEY=${METABRIDGE5_API_KEY:-dev_metabridge5_secret_key_123}
+      - VNC_PASSWORD=${VNC_PASSWORD:-metabridge5pass}
       
       # Storage Backend Strategy: 'github' (Free CDN) | 's3' (Cloudflare R2 / AWS S3) | 'local'
       - STORAGE_BACKEND=${STORAGE_BACKEND:-local}
@@ -25,7 +25,7 @@ services:
       - GITHUB_CDN_BASE_URL=${GITHUB_CDN_BASE_URL:-}
       
       # S3 / Cloudflare R2 Settings (Used when STORAGE_BACKEND=s3)
-      - S3_BUCKET_NAME=${S3_BUCKET_NAME:-savisor-market-data}
+      - S3_BUCKET_NAME=${S3_BUCKET_NAME:-metabridge5-market-data}
       - S3_ENDPOINT_URL=${S3_ENDPOINT_URL:-}
       - S3_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID:-}
       - S3_SECRET_ACCESS_KEY=${S3_SECRET_ACCESS_KEY:-}

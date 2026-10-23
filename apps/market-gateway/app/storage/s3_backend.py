@@ -25,7 +25,7 @@ class S3StorageBackend(StorageBackend):
         region_name: str | None = None,
         cdn_base_url: str | None = None,
     ):
-        self.bucket_name = bucket_name or os.environ.get("S3_BUCKET_NAME", "savisor-market-data")
+        self.bucket_name = bucket_name or os.environ.get("S3_BUCKET_NAME", "metabridge5-market-data")
         self.endpoint_url = endpoint_url or os.environ.get("S3_ENDPOINT_URL")
         self.access_key = access_key or os.environ.get("S3_ACCESS_KEY_ID") or os.environ.get("AWS_ACCESS_KEY_ID")
         self.secret_key = (

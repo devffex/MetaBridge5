@@ -1,6 +1,6 @@
-# Savisor Client API & Integration Guide
+# MetaBridge5 Client API & Integration Guide
 
-The **Savisor Market Data Node** provides a high-performance **Hybrid CDN + WebSocket Architecture** designed to support external applications—such as web charting frontends (TradingView / Lightweight Charts), algorithmic trading bots, quantitative machine learning pipelines, and mobile apps—with ultra-low latency and zero cloud egress cost.
+The **MetaBridge5 Market Gateway** provides a high-performance **Hybrid CDN + WebSocket Architecture** designed to support external applications—such as web charting frontends (TradingView / Lightweight Charts), algorithmic trading bots, quantitative machine learning pipelines, and mobile apps—with ultra-low latency and zero cloud egress cost.
 
 ---
 
@@ -11,8 +11,8 @@ sequenceDiagram
     autonumber
     actor Client as Client App (React / Python / Mobile)
     participant CDN as Global CDN (GitHub / Cloudflare)
-    participant NodeWS as Savisor Node (WebSockets)
-    participant NodeAPI as Savisor Node (REST API)
+    participant NodeWS as MetaBridge5 Node (WebSockets)
+    participant NodeAPI as MetaBridge5 Node (REST API)
 
     Note over Client,CDN: Phase 1: Historical Base Hydration
     Client->>CDN: GET /data/{symbol}/{timeframe}/recent.json (or history.parquet)
@@ -181,7 +181,7 @@ print(df.head())
 ### Global Authentication Header
 Protected endpoints require the `X-API-Key` header:
 ```http
-X-API-Key: dev_savisor_secret_key_123
+X-API-Key: dev_metabridge5_secret_key_123
 ```
 
 ---

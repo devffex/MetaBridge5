@@ -1,12 +1,12 @@
 # Wine, Prefix Insulation, and Environment Optimization Report
 
-This report provides a detailed analysis of the **Wine emulation layer**, **Prefix insulation**, and the **system environment** used in the `savisor-node` base image. It identifies specific files, libraries, caches, and configuration settings that bloat both the final Docker image and the running containers, and outlines concrete, safe pruning strategies.
+This report provides a detailed analysis of the **Wine emulation layer**, **Prefix insulation**, and the **system environment** used in the `metabridge5-node` base image. It identifies specific files, libraries, caches, and configuration settings that bloat both the final Docker image and the running containers, and outlines concrete, safe pruning strategies.
 
 ---
 
 ## 1. Emulation & Runtime Architecture Overview
 
-The `savisor-node` runtime is built on an Alpine Linux base and executes the Windows-compiled MetaTrader 5 terminal (`terminal64.exe`) and the Windows Python environment using **Wine 11.0**. Because the environment is headless, it relies on a virtual desktop stack:
+The `metabridge5-node` runtime is built on an Alpine Linux base and executes the Windows-compiled MetaTrader 5 terminal (`terminal64.exe`) and the Windows Python environment using **Wine 11.0**. Because the environment is headless, it relies on a virtual desktop stack:
 
 ```mermaid
 graph TD
@@ -56,7 +56,7 @@ To secure the running container and guarantee a zero-write-leak footprint, the c
 
 ## 3. High-Detail Size & Bloat Analysis
 
-Through active inspection of the built `savisor-base:latest` image and memory mapping (`/proc/*/maps`) of a fully running container, we identified the exact directories and files responsible for size bloat.
+Through active inspection of the built `metabridge5-base:latest` image and memory mapping (`/proc/*/maps`) of a fully running container, we identified the exact directories and files responsible for size bloat.
 
 ### A. The Wine DLL Duplication Penalty (Total Size: ~400 MB)
 Wine packages all standard Windows system DLLs (such as `kernel32.dll`, `user32.dll`, etc.) in the system libraries folder. When a prefix is initialized, these DLLs are duplicated into the prefix directory:

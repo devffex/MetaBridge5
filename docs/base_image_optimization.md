@@ -1,12 +1,12 @@
 # Base Image & Dependency Optimization Report
 
-This report analyzes the base Docker image and the packages provisioned during the building process for `savisor-node`. It outlines concrete optimization strategies to reduce the final image footprint, specifically focusing on system libraries, Python packages, and Docker layer structures (excluding Wine and MetaTrader 5).
+This report analyzes the base Docker image and the packages provisioned during the building process for `metabridge5-node`. It outlines concrete optimization strategies to reduce the final image footprint, specifically focusing on system libraries, Python packages, and Docker layer structures (excluding Wine and MetaTrader 5).
 
 ---
 
 ## Executive Summary
 
-The base Docker image (`savisor-base:latest`) currently occupies **1.46 GB** of disk space. Excluding the MetaTrader 5 directory (~415 MB in the unoptimized container) and the Wine system folders (~208 MB), the base operating system, system utilities, and Python environment occupy **~853 MB**.
+The base Docker image (`metabridge5-base:latest`) currently occupies **1.46 GB** of disk space. Excluding the MetaTrader 5 directory (~415 MB in the unoptimized container) and the Wine system folders (~208 MB), the base operating system, system utilities, and Python environment occupy **~853 MB**.
 
 By addressing Docker layering inefficiency, pruning unnecessary Python testing suites, eliminating build-only dependencies, and replacing the Python-dependent system supervisor with a compiled alternative, we can reduce the base footprint by **~207.6 MB** (a **24.2% reduction** in the base image components size).
 
@@ -23,7 +23,7 @@ By addressing Docker layering inefficiency, pruning unnecessary Python testing s
 ## Docker Layer & Build Optimization Strategies
 
 ### 1. Eliminate Layer Bloat with BuildKit Bind Mounts
-In [docker/Dockerfile.base](file:///home/julio/Work/savisor/savisor-node/docker/Dockerfile.base#L120), the pre-downloaded wheels are copied using a `COPY` instruction, then installed via `pip install`, and subsequently deleted using `rm -rf`. 
+In [docker/Dockerfile.base](file://docker/Dockerfile.base#L120), the pre-downloaded wheels are copied using a `COPY` instruction, then installed via `pip install`, and subsequently deleted using `rm -rf`. 
 * **The Problem**: Docker layers are additive. Once the `COPY` instruction commits the wheels to a layer history, deleting them in a subsequent `RUN` instruction only hides them from the final container. The ~33.2 MB footprint remains permanently in the image history.
 * **The Solution**: Use a BuildKit bind mount during package installation. This exposes the wheels folder read-only from the builder stage only during the execution of that specific `RUN` command:
   ```dockerfile
@@ -61,7 +61,7 @@ Alpine installs `supervisor` via `apk add supervisor`. This package depends on L
 
 ## Actionable Optimized Dockerfile
 
-Below is the proposed, fully optimized [docker/Dockerfile.base](file:///home/julio/Work/savisor/savisor-node/docker/Dockerfile.base) structure incorporating all identified strategies:
+Below is the proposed, fully optimized [docker/Dockerfile.base](file://docker/Dockerfile.base) structure incorporating all identified strategies:
 
 ```dockerfile
 # ==========================================
@@ -230,7 +230,7 @@ To verify that these optimizations do not alter runtime behavior:
 ### Automated/Local Executable Verification
 * **Build Base Image**:
   ```bash
-  docker build -f docker/Dockerfile.base -t savisor-base:optimized .
+  docker build -f docker/Dockerfile.base -t metabridge5-base:optimized .
   ```
 * **Verify System Services Sequence**:
   Run `run-gateway` from the Makefile to start Supervisord. Verify that:

@@ -1,6 +1,6 @@
 # MetaTrader 5 Optimization & Cleanup Report
 
-This report analyzes the files in the [MetaTrader5](file:///home/julio/Work/savisor/savisor-node/MetaTrader5) folder of the `savisor-node` repository. It details which files and directories can be safely removed to optimize the base Docker container while retaining full functionality for reading market data and executing trade operations via the Python `MetaTrader5` API.
+This report analyzes the files in the [MetaTrader5](file://MetaTrader5) folder of the `metabridge5-node` repository. It details which files and directories can be safely removed to optimize the base Docker container while retaining full functionality for reading market data and executing trade operations via the Python `MetaTrader5` API.
 
 ---
 
@@ -46,12 +46,12 @@ To generate a new optimized `MetaTrader5` folder from scratch (e.g., when upgrad
 
 These are the only files required to run the terminal in portable mode, connect to your broker, and support API connections:
 
-- **[terminal64.exe](file:///home/julio/Work/savisor/savisor-node/MetaTrader5/terminal64.exe)** (113.34 MB / 118,840,992 B): The core MT5 terminal executable.
-- **[origin.txt](file:///home/julio/Work/savisor/savisor-node/MetaTrader5/origin.txt)** (30 B): A system indicator file generated during installation.
-- **[Config/](file:///home/julio/Work/savisor/savisor-node/MetaTrader5/Config)**: Essential configurations:
+- **[terminal64.exe](file://MetaTrader5/terminal64.exe)** (113.34 MB / 118,840,992 B): The core MT5 terminal executable.
+- **[origin.txt](file://MetaTrader5/origin.txt)** (30 B): A system indicator file generated during installation.
+- **[Config/](file://MetaTrader5/Config)**: Essential configurations:
   - `common.ini` (590 B) & `settings.ini` (5,908 B) & `terminal.ini` (16,984 B): System settings for startup and expert advisor permissions.
   - `servers.dat` (41,440 B): List of broker trade servers.
-- **[Profiles/](file:///home/julio/Work/savisor/savisor-node/MetaTrader5/Profiles)** (0.08 MB / 79,384 B): Default chart profiles (`.chr`/`.wnd` files). Although no GUI chart is displayed inside a headless display server, keeping these avoids warnings and startup lag in the logs.
+- **[Profiles/](file://MetaTrader5/Profiles)** (0.08 MB / 79,384 B): Default chart profiles (`.chr`/`.wnd` files). Although no GUI chart is displayed inside a headless display server, keeping these avoids warnings and startup lag in the logs.
 
 ---
 
@@ -96,7 +96,7 @@ graph TD
 
 ## Docker Image Layer Optimization
 
-The current configuration in [docker/Dockerfile.base](file:///home/julio/Work/savisor/savisor-node/docker/Dockerfile.base#L93-L105) contains an efficiency issue. It copies the entire `MetaTrader5/` directory and subsequently runs a clean-up command:
+The current configuration in [docker/Dockerfile.base](file://docker/Dockerfile.base#L93-L105) contains an efficiency issue. It copies the entire `MetaTrader5/` directory and subsequently runs a clean-up command:
 
 ```dockerfile
 # Copy portable MetaTrader 5 from host and strip unused binaries to save space

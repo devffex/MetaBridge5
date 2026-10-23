@@ -35,9 +35,64 @@ When requesting very large datasets ($100,000+$ bars), querying everything in a 
 
 ---
 
-## 3. Triggering Historical Backfills
+## 3. Asset Discovery & Definition
 
-### A. Deep Backfill by Candle Count (100,000+ Bars)
+Before triggering extraction, understand where assets originate and how they are classified:
+
+1. **Broker Master Catalog (`GET /api/v1/symbols/broker`)**: Every asset symbol offered by the connected broker (e.g. Forex pairs, crypto indices, commodities).
+2. **Active Market Watch (`GET /api/v1/symbols/active`)**: The subset of broker assets currently enabled in the MetaTrader 5 terminal for tick reception and real time processing.
+3. **Gateway Startup Watchlist (`METABRIDGE5_SYMBOLS`)**: Configured in `.env` (e.g. `METABRIDGE5_SYMBOLS=EURUSD,GBPUSD,USDJPY`), which activates those assets upon container boot.
+
+---
+
+## 4. Triggering Historical Extraction
+
+The `POST /api/v1/pipeline/backfill` endpoint supports extracting a single asset, a selected list of assets, or all available assets, across custom or default timeframes, bounded by relative days, bar counts, or ISO calendar ranges.
+
+### A. Extract ALL Available Active Assets (Relative Days)
+
+Extract the last 30 days of history for all active Market Watch assets across all standard timeframes:
+
+```bash
+curl -i -X POST http://localhost:8000/api/v1/pipeline/backfill \
+  -H "X-API-Key: your_secret_api_key_here" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "all_symbols": true,
+    "days": 30
+  }'
+```
+
+### B. Extract ALL Broker Catalog Assets (Entire Broker Master List)
+
+To extract history for every asset supported by the broker (e.g. 500+ pairs):
+
+```bash
+curl -i -X POST http://localhost:8000/api/v1/pipeline/backfill \
+  -H "X-API-Key: your_secret_api_key_here" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "all_symbols": true,
+    "source": "broker",
+    "days": 90,
+    "timeframes": ["H1", "D1"]
+  }'
+```
+
+### C. Extract Multiple Targeted Assets & Specific Timeframes
+
+```bash
+curl -i -X POST http://localhost:8000/api/v1/pipeline/backfill \
+  -H "X-API-Key: your_secret_api_key_here" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "symbols": ["EURUSD", "GBPUSD", "USDJPY"],
+    "timeframes": ["M1", "M5", "H1", "D1"],
+    "days": 60
+  }'
+```
+
+### D. Single Asset Deep Backfill by Bar Count (100,000+ Bars)
 
 ```bash
 curl -i -X POST http://localhost:8000/api/v1/pipeline/backfill \
@@ -50,11 +105,7 @@ curl -i -X POST http://localhost:8000/api/v1/pipeline/backfill \
   }'
 ```
 
----
-
-### B. Multi-Year Date Range Backfill (ISO 8601)
-
-Pull an exact multi-year historical dataset (e.g. 8 years of data) directly into storage:
+### E. Explicit Calendar Date Range Backfill (ISO 8601)
 
 ```bash
 curl -i -X POST http://localhost:8000/api/v1/pipeline/backfill \
@@ -70,7 +121,7 @@ curl -i -X POST http://localhost:8000/api/v1/pipeline/backfill \
 
 ---
 
-### C. Inspecting Backfill Progress
+## 5. Inspecting Backfill Progress & Pipeline Status
 
 ```bash
 curl -s -H "X-API-Key: your_secret_api_key_here" \
@@ -169,8 +220,8 @@ curl -s -H "X-API-Key: your_secret_api_key_here" \
 ## 6. Streaming Sink Architecture (`StreamParquetSink`)
 
 Adopted from the enterprise streaming sink patterns in `cifra-connectors`:
-* **Chunked In-Memory Buffers**: Collects candle data in memory up to `SAVISOR_PARQUET_BATCH_ROWS` (default: `25,000` rows).
-* **Staged Chunk Creation**: Periodically writes flushed rows into local temporary Snappy Parquet chunks in `/tmp/savisor_sink_<symbol>_<tf>_*`.
+* **Chunked In-Memory Buffers**: Collects candle data in memory up to `metabridge5_PARQUET_BATCH_ROWS` (default: `25,000` rows).
+* **Staged Chunk Creation**: Periodically writes flushed rows into local temporary Snappy Parquet chunks in `/tmp/metabridge5_sink_<symbol>_<tf>_*`.
 * **Atomic Storage Upload**: Merges all chunks with existing cloud history and commits the complete Parquet and JSON files atomically in one storage operation.
 * **Safe Error Abort**: If a network timeout or broker error occurs mid-stream, `sink.abort()` executes automatically to cleanly wipe local temporary staging files without corrupting existing datasets.
 

@@ -1249,7 +1249,7 @@ wheels = [
 ]
 
 [[package]]
-name = "savisor-market-gateway"
+name = "metabridge5-market-gateway"
 version = "0.2.0"
 source = { virtual = "." }
 dependencies = [

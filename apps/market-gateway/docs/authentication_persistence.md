@@ -48,8 +48,8 @@ The production-grade solution is to **persist the entire MetaTrader 5 installati
 
 ```mermaid
 flowchart LR
-    ContainerV1["savisor-market-node (v1.0)"] -->|"Mounts /home/wine/.wine"| Volume[("Docker Named Volume: savisor_mt5_data")]
-    ContainerV2["savisor-market-node (v2.0 Upgrade)"] -->|"Mounts /home/wine/.wine"| Volume
+    ContainerV1["metabridge5-market-node (v1.0)"] -->|"Mounts /home/wine/.wine"| Volume[("Docker Named Volume: metabridge5_mt5_data")]
+    ContainerV2["metabridge5-market-node (v2.0 Upgrade)"] -->|"Mounts /home/wine/.wine"| Volume
     Volume -->|"Preserves Session & Cryptographic Keys"| Connected["100% Authenticated to Broker"]
 ```
 
@@ -60,7 +60,7 @@ flowchart LR
 ### Step 1: Create the Named Volume
 
 ```bash
-docker volume create savisor_mt5_data
+docker volume create metabridge5_mt5_data
 ```
 
 ---
@@ -68,12 +68,12 @@ docker volume create savisor_mt5_data
 ### Step 2: Run the Container with the Volume Attached
 
 ```bash
-docker run -it --rm --name savisor-market-node \
+docker run -it --rm --name metabridge5-market-node \
   -p 8000:8000 \
   -p 5900:5900 \
-  -v savisor_mt5_data:/home/wine/.wine \
-  --env-file /home/julio/Work/savisor/savisor-node/apps/market-gateway/.env \
-  savisor-market-node:latest
+  -v metabridge5_mt5_data:/home/wine/.wine \
+  --env-file apps/market-gateway/.env \
+  metabridge5-market-node:latest
 ```
 
 ---
@@ -98,13 +98,13 @@ docker run -it --rm --name savisor-market-node \
 Once authenticated, you can launch the container as a persistent background daemon:
 
 ```bash
-docker run -d --name savisor-market-node \
+docker run -d --name metabridge5-market-node \
   --restart unless-stopped \
   -p 8000:8000 \
   -p 5900:5900 \
-  -v savisor_mt5_data:/home/wine/.wine \
-  --env-file /home/julio/Work/savisor/savisor-node/apps/market-gateway/.env \
-  savisor-market-node:latest
+  -v metabridge5_mt5_data:/home/wine/.wine \
+  --env-file apps/market-gateway/.env \
+  metabridge5-market-node:latest
 ```
 
 ---
@@ -121,11 +121,11 @@ sequenceDiagram
     participant Sec as Secure Private Storage (Private Repo / S3)
     participant HostB as Machine B (Destination Cloud Host)
 
-    Dev->>HostA: Export savisor_mt5_data volume to tar.gz archive
-    HostA->>Sec: Store savisor_mt5_session.tar.gz (100% PRIVATE)
-    Dev->>HostB: Pull savisor_mt5_session.tar.gz
+    Dev->>HostA: Export metabridge5_mt5_data volume to tar.gz archive
+    HostA->>Sec: Store metabridge5_mt5_session.tar.gz (100% PRIVATE)
+    Dev->>HostB: Pull metabridge5_mt5_session.tar.gz
     HostB->>HostB: Create new named volume & extract archive
-    HostB->>HostB: Launch savisor-market-node container
+    HostB->>HostB: Launch metabridge5-market-node container
     Note over HostB: Container boots 100% authenticated with zero VNC setup!
 ```
 
@@ -145,7 +145,7 @@ sequenceDiagram
 
 > [!CAUTION]
 > **Store in 100% Private Locations Only**:
-> The `savisor_mt5_session.tar.gz` archive contains your encrypted broker tokens and trading session states.
+> The `metabridge5_mt5_session.tar.gz` archive contains your encrypted broker tokens and trading session states.
 > * **Never** upload this archive to a public GitHub repository.
 > * Store it **only** in a 100% private GitHub repository, private S3/Cloudflare R2 bucket, or an encrypted local drive.
 
@@ -154,28 +154,28 @@ sequenceDiagram
 ### Step-by-Step Export and Restore Procedure
 
 #### Step 1: Export from the Running Container on Machine A (Source Machine)
-Run these commands on your original machine while `savisor-market-node` is running:
+Run these commands on your original machine while `metabridge5-market-node` is running:
 
 ```bash
 # 1. Create the compressed archive inside the running container
-docker exec savisor-market-node tar -czf /tmp/savisor_mt5_session.tar.gz -C /home/wine/.wine .
+docker exec metabridge5-market-node tar -czf /tmp/metabridge5_mt5_session.tar.gz -C /home/wine/.wine .
 
 # 2. Copy the archive directly to the apps/market-gateway directory
-docker cp savisor-market-node:/tmp/savisor_mt5_session.tar.gz /home/julio/Work/savisor/savisor-node/apps/market-gateway/savisor_mt5_session.tar.gz
+docker cp metabridge5-market-node:/tmp/metabridge5_mt5_session.tar.gz apps/market-gateway/metabridge5_mt5_session.tar.gz
 
 # 3. Clean up the temporary archive inside the container
-docker exec savisor-market-node rm -f /tmp/savisor_mt5_session.tar.gz
+docker exec metabridge5-market-node rm -f /tmp/metabridge5_mt5_session.tar.gz
 ```
 
 *The archive is saved to:*
 ```text
-/home/julio/Work/savisor/savisor-node/apps/market-gateway/savisor_mt5_session.tar.gz
+apps/market-gateway/metabridge5_mt5_session.tar.gz
 ```
 
 ---
 
 #### Step 2: Store in a Secure Private Location
-Upload `apps/market-gateway/savisor_mt5_session.tar.gz` to your **private repository** or private cloud object storage.
+Upload `apps/market-gateway/metabridge5_mt5_session.tar.gz` to your **private repository** or private cloud object storage.
 
 ---
 
@@ -184,13 +184,13 @@ On your destination machine or cloud server (from the `apps/market-gateway` dire
 
 ```bash
 # 1. Create the named volume on Machine B
-docker volume create savisor_mt5_data
+docker volume create metabridge5_mt5_data
 
 # 2. Extract the archive into the new volume
 docker run --rm \
-  -v savisor_mt5_data:/to_volume \
-  -v /home/julio/Work/savisor/savisor-node/apps/market-gateway:/backup \
-  alpine tar -xzf /backup/savisor_mt5_session.tar.gz -C /to_volume
+  -v metabridge5_mt5_data:/to_volume \
+  -v apps/market-gateway:/backup \
+  alpine tar -xzf /backup/metabridge5_mt5_session.tar.gz -C /to_volume
 ```
 
 ---
@@ -198,12 +198,12 @@ docker run --rm \
 #### Step 4: Launch the Container on Machine B
 
 ```bash
-docker run -it --rm --name savisor-market-node \
+docker run -it --rm --name metabridge5-market-node \
   -p 8000:8000 \
   -p 5900:5900 \
-  -v savisor_mt5_data:/home/wine/.wine \
-  --env-file /home/julio/Work/savisor/savisor-node/apps/market-gateway/.env \
-  savisor-market-node:latest
+  -v metabridge5_mt5_data:/home/wine/.wine \
+  --env-file apps/market-gateway/.env \
+  metabridge5-market-node:latest
 ```
 
 ### Result
@@ -220,9 +220,9 @@ flowchart TD
     Host["Single Container Host (Port 8000)"]
     
     subgraph Volumes ["Isolated Docker Named Volumes"]
-        VolA[("Volume A: savisor_mt5_icmarkets_demo")]
-        VolB[("Volume B: savisor_mt5_ftmo_live")]
-        VolC[("Volume C: savisor_mt5_binance_broker")]
+        VolA[("Volume A: metabridge5_mt5_icmarkets_demo")]
+        VolB[("Volume B: metabridge5_mt5_ftmo_live")]
+        VolC[("Volume C: metabridge5_mt5_binance_broker")]
     end
 
     Host -.->|"Mount Volume A (Demo Mode)"| VolA
@@ -234,10 +234,10 @@ flowchart TD
 
 ```bash
 # Broker A: IC Markets Demo
-docker volume create savisor_mt5_icmarkets_demo
+docker volume create metabridge5_mt5_icmarkets_demo
 
 # Broker B: FTMO Live Account
-docker volume create savisor_mt5_ftmo_live
+docker volume create metabridge5_mt5_ftmo_live
 ```
 
 ---
@@ -246,21 +246,21 @@ docker volume create savisor_mt5_ftmo_live
 
 * **Authenticate Broker A (IC Markets)**:
   ```bash
-  docker run -it --rm --name savisor-market-node \
+  docker run -it --rm --name metabridge5-market-node \
     -p 8000:8000 -p 5900:5900 \
-    -v savisor_mt5_icmarkets_demo:/home/wine/.wine \
-    --env-file /home/julio/Work/savisor/savisor-node/apps/market-gateway/.env.icmarkets \
-    savisor-market-node:latest
+    -v metabridge5_mt5_icmarkets_demo:/home/wine/.wine \
+    --env-file apps/market-gateway/.env.icmarkets \
+    metabridge5-market-node:latest
   ```
   Connect via VNC (`vncviewer localhost:5900`), log into **IC Markets**, verify connection, and exit (`Ctrl+C`).
 
 * **Authenticate Broker B (FTMO)**:
   ```bash
-  docker run -it --rm --name savisor-market-node \
+  docker run -it --rm --name metabridge5-market-node \
     -p 8000:8000 -p 5900:5900 \
-    -v savisor_mt5_ftmo_live:/home/wine/.wine \
-    --env-file /home/julio/Work/savisor/savisor-node/apps/market-gateway/.env.ftmo \
-    savisor-market-node:latest
+    -v metabridge5_mt5_ftmo_live:/home/wine/.wine \
+    --env-file apps/market-gateway/.env.ftmo \
+    metabridge5-market-node:latest
   ```
   Connect via VNC (`vncviewer localhost:5900`), log into **FTMO**, verify connection, and exit (`Ctrl+C`).
 
@@ -270,20 +270,20 @@ docker volume create savisor_mt5_ftmo_live
 
 To run the container with **Broker A**:
 ```bash
-docker run -it --rm --name savisor-market-node \
+docker run -it --rm --name metabridge5-market-node \
   -p 8000:8000 -p 5900:5900 \
-  -v savisor_mt5_icmarkets_demo:/home/wine/.wine \
-  --env-file /home/julio/Work/savisor/savisor-node/apps/market-gateway/.env.icmarkets \
-  savisor-market-node:latest
+  -v metabridge5_mt5_icmarkets_demo:/home/wine/.wine \
+  --env-file apps/market-gateway/.env.icmarkets \
+  metabridge5-market-node:latest
 ```
 
 To stop and switch to **Broker B**:
 ```bash
-docker run -it --rm --name savisor-market-node \
+docker run -it --rm --name metabridge5-market-node \
   -p 8000:8000 -p 5900:5900 \
-  -v savisor_mt5_ftmo_live:/home/wine/.wine \
-  --env-file /home/julio/Work/savisor/savisor-node/apps/market-gateway/.env.ftmo \
-  savisor-market-node:latest
+  -v metabridge5_mt5_ftmo_live:/home/wine/.wine \
+  --env-file apps/market-gateway/.env.ftmo \
+  metabridge5-market-node:latest
 ```
 
 * **Zero Re-Authentication**: Both volumes permanently preserve their respective broker server lists, encrypted tokens, cached symbol histories, and chart settings without conflicting.
@@ -300,13 +300,13 @@ flowchart LR
         subgraph Node1 ["Node 1 (IC Markets Demo)"]
             API1["API / WS (Port 8001)"]
             VNC1["VNC (Port 5901)"]
-            Vol1[("Volume: savisor_mt5_icmarkets_demo")]
+            Vol1[("Volume: metabridge5_mt5_icmarkets_demo")]
         end
 
         subgraph Node2 ["Node 2 (FTMO Live)"]
             API2["API / WS (Port 8002)"]
             VNC2["VNC (Port 5902)"]
-            Vol2[("Volume: savisor_mt5_ftmo_live")]
+            Vol2[("Volume: metabridge5_mt5_ftmo_live")]
         end
     end
 
@@ -320,26 +320,26 @@ flowchart LR
 
 #### 1. Launch Node 1 (IC Markets Demo on Port 8001):
 ```bash
-docker run -d --name savisor-node-icmarkets \
+docker run -d --name metabridge5-node-icmarkets \
   --restart unless-stopped \
   -p 8001:8000 \
   -p 5901:5900 \
-  -v savisor_mt5_icmarkets_demo:/home/wine/.wine \
-  --env-file /home/julio/Work/savisor/savisor-node/apps/market-gateway/.env.icmarkets \
+  -v metabridge5_mt5_icmarkets_demo:/home/wine/.wine \
+  --env-file apps/market-gateway/.env.icmarkets \
   -e VNC_PASSWORD="vnc_icmarkets_pass" \
-  savisor-market-node:latest
+  metabridge5-market-node:latest
 ```
 
 #### 2. Launch Node 2 (FTMO Live on Port 8002):
 ```bash
-docker run -d --name savisor-node-ftmo \
+docker run -d --name metabridge5-node-ftmo \
   --restart unless-stopped \
   -p 8002:8000 \
   -p 5902:5900 \
-  -v savisor_mt5_ftmo_live:/home/wine/.wine \
-  --env-file /home/julio/Work/savisor/savisor-node/apps/market-gateway/.env.ftmo \
+  -v metabridge5_mt5_ftmo_live:/home/wine/.wine \
+  --env-file apps/market-gateway/.env.ftmo \
   -e VNC_PASSWORD="vnc_ftmo_pass" \
-  savisor-market-node:latest
+  metabridge5-market-node:latest
 ```
 
 ---
@@ -351,13 +351,13 @@ docker run -d --name savisor-node-ftmo \
 docker ps
 
 # Follow logs for IC Markets node
-docker logs -f savisor-node-icmarkets
+docker logs -f metabridge5-node-icmarkets
 
 # Follow logs for FTMO node
-docker logs -f savisor-node-ftmo
+docker logs -f metabridge5-node-ftmo
 
 # Stop both nodes
-docker stop savisor-node-icmarkets savisor-node-ftmo
+docker stop metabridge5-node-icmarkets metabridge5-node-ftmo
 ```
 
 ---
@@ -368,7 +368,7 @@ docker stop savisor-node-icmarkets savisor-node-ftmo
 
 During active development and bug-fixing cycles (e.g. implementing 5–10 code fixes, new feature endpoints, or performance tweaks), you need to redeploy and test changes rapidly.
 
-Because your broker login, encrypted credentials, and Wine cryptographic registry keys live on the persistent Docker named volume (`savisor_mt5_data`), **re-authentication and TigerVNC are NEVER required when updating the code**.
+Because your broker login, encrypted credentials, and Wine cryptographic registry keys live on the persistent Docker named volume (`metabridge5_mt5_data`), **re-authentication and TigerVNC are NEVER required when updating the code**.
 
 When you modify the codebase, you only need to rebuild the application image, recreate the container, and reattach it to the existing volume.
 
@@ -377,9 +377,9 @@ sequenceDiagram
     autonumber
     actor Dev as Engineer / Agent
     participant Code as Codebase (/apps/market-gateway/src)
-    participant Image as Docker Image (savisor-market-node:latest)
-    participant Cont as Docker Container (savisor-market-node)
-    participant Vol as Persistent Volume (savisor_mt5_data)
+    participant Image as Docker Image (metabridge5-market-node:latest)
+    participant Cont as Docker Container (metabridge5-market-node)
+    participant Vol as Persistent Volume (metabridge5_mt5_data)
 
     Dev->>Code: Apply fixes / new features
     Dev->>Image: Rebuild image (make build-market-node)
@@ -403,19 +403,19 @@ make build-market-node
 #### Step 2: Stop and Remove the Old Container
 Stop and delete the running container instance:
 ```bash
-docker rm -f savisor-market-node
+docker rm -f metabridge5-market-node
 ```
-*Note: Removing the container only removes the temporary container execution layer. The named volume `savisor_mt5_data` and your session files remain completely untouched.*
+*Note: Removing the container only removes the temporary container execution layer. The named volume `metabridge5_mt5_data` and your session files remain completely untouched.*
 
 #### Step 3: Run the New Container Attached to the Volume
 Start the new container mounting the existing volume and loading your `.env` file:
 ```bash
-docker run -d --name savisor-market-node \
+docker run -d --name metabridge5-market-node \
   -p 8000:8000 \
   -p 5900:5900 \
-  -v savisor_mt5_data:/home/wine/.wine \
-  --env-file /home/julio/Work/savisor/savisor-node/apps/market-gateway/.env \
-  savisor-market-node:latest
+  -v metabridge5_mt5_data:/home/wine/.wine \
+  --env-file apps/market-gateway/.env \
+  metabridge5-market-node:latest
 ```
 
 ---
@@ -425,17 +425,17 @@ You can chain all 3 steps into a single copy-paste command to deploy and verify 
 
 ```bash
 make build-market-node && \
-docker rm -f savisor-market-node && \
-docker run -d --name savisor-market-node \
+docker rm -f metabridge5-market-node && \
+docker run -d --name metabridge5-market-node \
   -p 8000:8000 \
   -p 5900:5900 \
-  -v savisor_mt5_data:/home/wine/.wine \
-  --env-file /home/julio/Work/savisor/savisor-node/apps/market-gateway/.env \
-  savisor-market-node:latest
+  -v metabridge5_mt5_data:/home/wine/.wine \
+  --env-file apps/market-gateway/.env \
+  metabridge5-market-node:latest
 ```
 
 ### Result
-The new container boots with your updated code, attaches to `savisor_mt5_data`, detects the existing session, and connects to the broker **100% authenticated immediately with zero downtime or manual login required**.
+The new container boots with your updated code, attaches to `metabridge5_mt5_data`, detects the existing session, and connects to the broker **100% authenticated immediately with zero downtime or manual login required**.
 
 ---
 

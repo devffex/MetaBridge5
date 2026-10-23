@@ -1,4 +1,4 @@
-FROM savisor-base:latest
+FROM metabridge5-base:latest
 
 USER root
 
@@ -27,5 +27,5 @@ COPY --chown=wine:wine apps/market-gateway/supervisord.conf /etc/supervisor/conf
 
 EXPOSE 8000
 
-# Entrypoint is inherited from savisor-base: /usr/bin/supervisord
+# Entrypoint is inherited from metabridge5-base: /usr/bin/supervisord
 

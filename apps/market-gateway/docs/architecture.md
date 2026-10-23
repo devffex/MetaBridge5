@@ -1,6 +1,6 @@
 # Architecture & System Design Manual
 
-The **Savisor Market Node** is an autonomous market data collection, real-time in-flight **Candle 0** engine, and historical dataset pipeline designed for MetaTrader 5 broker terminals.
+The **MetaBridge5 Market Gateway** is an autonomous market data collection, real-time in-flight **Candle 0** engine, and historical dataset pipeline designed for MetaTrader 5 broker terminals.
 
 ---
 
@@ -12,7 +12,7 @@ flowchart TD
         TradeServer[("Broker Trade Server")]
     end
 
-    subgraph ContainerNode ["Savisor Market Node (Docker Container)"]
+    subgraph ContainerNode ["MetaBridge5 Market Gateway (Docker Container)"]
         subgraph VirtualizationLayer ["Wine Virtualization & MT5 Daemon"]
             MT5Terminal["MetaTrader 5 Terminal (terminal64.exe)"]
             SafeLock["SafeMT5Lock (Mutual Exclusion Mutex)"]
@@ -32,7 +32,7 @@ flowchart TD
         end
 
         subgraph LocalTelemetry ["Local Audit & Telemetry"]
-            SQLiteWAL[("SQLite WAL DB (/tmp/savisor_traces.sqlite3)")]
+            SQLiteWAL[("SQLite WAL DB (/tmp/metabridge5_traces.sqlite3)")]
         end
     end
 
@@ -139,7 +139,7 @@ Broker catalogs for large multi-asset brokerages (containing thousands of curren
 
 ## 6. Backend Design Patterns Implementation Matrix
 
-The Savisor Market Node adheres to strict enterprise software design patterns from the `.agents/skills/backend-design-patterns` handbook:
+The MetaBridge5 Market Gateway adheres to strict enterprise software design patterns from the `.agents/skills/backend-design-patterns` handbook:
 
 | Pattern | Category | Implementation in Codebase | Plain-English Purpose |
 |---|---|---|---|

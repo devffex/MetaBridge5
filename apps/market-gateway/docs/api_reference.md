@@ -1,6 +1,6 @@
 # Complete API Reference Directory
 
-This document is the exhaustive API reference for all REST endpoints and WebSocket channels exposed by the Savisor Market Node on port `8000`.
+This document is the exhaustive API reference for all REST endpoints and WebSocket channels exposed by the MetaBridge5 Market Gateway on port `8000`.
 
 ---
 
@@ -58,12 +58,24 @@ X-API-Key: your_secret_api_key_here
 ```json
 {
   "symbol": "EURUSD",
-  "timeframes": ["M1", "M5", "M15", "M30", "H1", "H4", "D1"],
+  "symbols": ["EURUSD", "GBPUSD"],
+  "all_symbols": false,
+  "source": "active",
+  "timeframes": ["M1", "M5", "M15", "M30", "H1", "H4", "D1", "W1", "MN1"],
+  "days": 30,
   "candle_count": 100000,
-  "date_from": "2018-01-01T00:00:00Z",
-  "date_to": "2026-08-26T00:00:00Z"
+  "date_from": "2024-01-01T00:00:00Z",
+  "date_to": "2024-12-31T23:59:59Z"
 }
 ```
+* `symbol` *(optional)*: Single asset symbol (e.g. `"EURUSD"`), or `"ALL"` / `"*"` to extract all assets.
+* `symbols` *(optional)*: List of explicit symbols to extract (e.g. `["EURUSD", "GBPUSD", "USDJPY"]`).
+* `all_symbols` *(optional, bool)*: If `true`, extracts all assets.
+* `source` *(optional, string)*: Asset pool when extracting all assets: `"active"` (Market Watch, default) or `"broker"` (full broker catalog).
+* `timeframes` *(optional, list)*: Explicit timeframes to extract (e.g. `["M1", "H1", "D1"]`). Defaults to all 9 supported timeframes (`M1`, `M5`, `M15`, `M30`, `H1`, `H4`, `D1`, `W1`, `MN1`).
+* `days` *(optional, integer)*: Relative lookback in days (e.g. `30`, `90`, `365`). Automatically calculates `date_from` and `date_to`.
+* `candle_count` *(optional, integer)*: Maximum historical bars per timeframe when date range is not specified (default: `100000`).
+* `date_from` / `date_to` *(optional, string)*: Explicit ISO 8601 calendar bounds.
 
 ### `PipelineControlRequest`
 ```json

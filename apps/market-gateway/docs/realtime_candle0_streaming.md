@@ -8,7 +8,7 @@ This guide covers the architecture, data models, REST endpoints, and WebSocket s
 
 In financial market data, **Candle 0** is the currently forming, unfinished candle of the active time period. 
 
-Most traditional data APIs only publish finalized historical bars (Candle 1, Candle 2, etc.), which creates a 1-minute to 1-hour lag in frontend charts. The Savisor Market Node eliminates this lag by polling sub-second ticks from MetaTrader 5 (every 200ms) and aggregating the live forming OHLCV bar across all 9 standard timeframes in memory.
+Most traditional data APIs only publish finalized historical bars (Candle 1, Candle 2, etc.), which creates a 1-minute to 1-hour lag in frontend charts. The MetaBridge5 Market Gateway eliminates this lag by polling sub-second ticks from MetaTrader 5 (every 200ms) and aggregating the live forming OHLCV bar across all 9 standard timeframes in memory.
 
 ```mermaid
 sequenceDiagram
