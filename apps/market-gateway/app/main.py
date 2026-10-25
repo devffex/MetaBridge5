@@ -17,6 +17,7 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from prometheus_client import (
     CONTENT_TYPE_LATEST,
     Counter,
@@ -272,6 +273,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Serve generated parquet and JSON analytics datasets
+os.makedirs("/tmp/metabridge5_data", exist_ok=True)
+app.mount("/static", StaticFiles(directory="/tmp/metabridge5_data"), name="static")
 
 
 @app.get("/metrics")
