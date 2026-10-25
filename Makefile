@@ -9,7 +9,7 @@ build-base:
 	docker build -f docker/Dockerfile.base -t metabridge5-base:latest .
 
 # 2. Build the autonomous Tier 2 Market Node container (FastAPI + WebSocket + Pipeline)
-build-market-node:
+build-market-node: build-base
 	docker build -f apps/market-gateway/Dockerfile -t metabridge5-market-node:latest .
 
 build-node: build-market-node
