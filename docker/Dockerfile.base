@@ -83,6 +83,9 @@ ENV WINEDLLOVERRIDES="mscoree,mshtml,winemenubuilder.exe=disabled"
 ENV PYTHONDONTWRITEBYTECODE=1
 # Globally silence verbose Wine logging
 ENV WINEDEBUG=-all
+# Default credentials for development (can be overridden via docker run -e)
+ENV VNC_PASSWORD=metabridge5pass
+ENV METABRIDGE5_API_KEY=dev_metabridge5_secret_key_123
 
 # Create wine user and workspace
 RUN adduser -D -u 1000 wine && \
@@ -113,8 +116,11 @@ RUN echo "UTC" > /etc/timezone
 RUN rm -f /home/wine/.wine/drive_c/MetaTrader5/Config/terminal.lic \
           /home/wine/.wine/drive_c/MetaTrader5/Config/accounts.dat
 
-# Create the VNC password directory and set permissions (run as root)
+# Create the VNC password directory, set permissions, and pre-bake default passwords
 RUN mkdir -p /home/wine/.vnc && \
+    printf "metabridge5pass\nMetabridge5Pass\nMetaBridge5Pass\n" > /home/wine/.vnc/passwdfile && \
+    x11vnc -storepasswd metabridge5pass /home/wine/.vnc/passwd && \
+    chmod 600 /home/wine/.vnc/passwdfile /home/wine/.vnc/passwd && \
     chown -R wine:wine /home/wine/.vnc
 
 # Copy Python runtime base (from python-builder)
