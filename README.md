@@ -520,13 +520,16 @@ TZ=UTC
 
 ### Build Market Node Image
 
-Building the market node compiles FastAPI, Polars, PyArrow, and the async ingestion pipeline on top of the base image. The Docker engine registers the resulting image under `metabridge5-market-node:latest`:
+Building the market node compiles FastAPI, Polars, PyArrow, and the async ingestion pipeline on top of the base image. Because the market node extends `metabridge5-base:latest`, the foundational base image must exist locally before compiling the gateway:
 
 ```bash
-# Build using Makefile target
+# Option A: Automated sequential build via Makefile (builds base first if missing)
 make build-market-node
+# or build both targets explicitly:
+make build-all
 
-# Or build directly with Docker
+# Option B: Direct Docker commands (build base first, then market node)
+docker build -f docker/Dockerfile.base -t metabridge5-base:latest .
 docker build -f apps/market-gateway/Dockerfile -t metabridge5-market-node:latest .
 ```
 
