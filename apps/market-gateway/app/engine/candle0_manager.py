@@ -172,15 +172,29 @@ class Candle0Manager:
 
     def get_candle0(self, symbol: str, timeframe: str) -> Candle0State | None:
         """Returns the current in-flight Candle 0 state for a given symbol and timeframe."""
-        state_key = (symbol.upper(), timeframe.upper())
-        return self._states.get(state_key)
+        sym = symbol.upper()
+        tf = timeframe.upper()
+        if (sym, tf) in self._states:
+            return self._states[(sym, tf)]
+        if sym.endswith("M") and (sym[:-1], tf) in self._states:
+            return self._states[(sym[:-1], tf)]
+        if (sym + "M", tf) in self._states:
+            return self._states[(sym + "M", tf)]
+        return None
 
     def get_all_candle0(self, symbol: str) -> dict[str, dict[str, Any]]:
         """Returns all active timeframe Candle 0 states for a symbol."""
-        symbol = symbol.upper()
+        sym = symbol.upper()
+        target_sym = sym
+        if (sym, "M1") not in self._states:
+            if sym.endswith("M") and (sym[:-1], "M1") in self._states:
+                target_sym = sym[:-1]
+            elif (sym + "M", "M1") in self._states:
+                target_sym = sym + "M"
+
         res = {}
         for tf in self.supported_timeframes:
-            state = self._states.get((symbol, tf))
+            state = self._states.get((target_sym, tf))
             if state:
                 res[tf] = state.to_dict()
         return res

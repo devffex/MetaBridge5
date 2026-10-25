@@ -31,6 +31,26 @@ class TerminalGRPCClient:
             return [("x-api-key", self.api_key)]
         return []
 
+    def resolve_symbol(self, symbol: str) -> str:
+        """Resolves symbol casing and broker suffixes against the MT5 terminal symbols."""
+        if not hasattr(self, "_symbol_map") or not self._symbol_map:
+            try:
+                syms = self.get_symbols(selected_only=False)
+                m = {}
+                for s in syms:
+                    name = s.get("name", "")
+                    if name:
+                        m[name.upper()] = name
+                        if name.endswith("m"):
+                            base = name[:-1].upper()
+                            if base not in m:
+                                m[base] = name
+                self._symbol_map = m
+            except Exception as e:
+                logger.warning(f"Could not build symbol resolution map: {e}")
+                self._symbol_map = {}
+        return self._symbol_map.get(symbol.upper(), symbol)
+
     def get_health(self):
         try:
             req = terminal_pb2.HealthRequest()
@@ -42,8 +62,9 @@ class TerminalGRPCClient:
 
     def get_rates_range(self, symbol: str, timeframe: int, date_from: str, date_to: str):
         try:
+            resolved = self.resolve_symbol(symbol)
             req = terminal_pb2.RatesRangeRequest(
-                symbol=symbol, timeframe=timeframe, date_from=date_from, date_to=date_to
+                symbol=resolved, timeframe=timeframe, date_from=date_from, date_to=date_to
             )
             res = self.stub.GetRatesRange(req, metadata=self._get_metadata(), timeout=60)
             return json.loads(res.rates_json)
@@ -53,7 +74,8 @@ class TerminalGRPCClient:
 
     def get_rates_from(self, symbol: str, timeframe: int, date_from: str, count: int):
         try:
-            req = terminal_pb2.RatesFromRequest(symbol=symbol, timeframe=timeframe, date_from=date_from, count=count)
+            resolved = self.resolve_symbol(symbol)
+            req = terminal_pb2.RatesFromRequest(symbol=resolved, timeframe=timeframe, date_from=date_from, count=count)
             res = self.stub.GetRatesFrom(req, metadata=self._get_metadata(), timeout=60)
             return json.loads(res.rates_json)
         except Exception as e:
@@ -62,7 +84,8 @@ class TerminalGRPCClient:
 
     def get_rates_from_pos(self, symbol: str, timeframe: int, start_pos: int, count: int):
         try:
-            req = terminal_pb2.RatesFromPosRequest(symbol=symbol, timeframe=timeframe, start_pos=start_pos, count=count)
+            resolved = self.resolve_symbol(symbol)
+            req = terminal_pb2.RatesFromPosRequest(symbol=resolved, timeframe=timeframe, start_pos=start_pos, count=count)
             res = self.stub.GetRatesFromPos(req, metadata=self._get_metadata(), timeout=60)
             return json.loads(res.rates_json)
         except Exception as e:
@@ -71,7 +94,8 @@ class TerminalGRPCClient:
 
     def select_symbol(self, symbol: str, enable: bool):
         try:
-            req = terminal_pb2.SymbolSelectRequest(symbol=symbol, enable=enable)
+            resolved = self.resolve_symbol(symbol)
+            req = terminal_pb2.SymbolSelectRequest(symbol=resolved, enable=enable)
             res = self.stub.SelectSymbol(req, metadata=self._get_metadata(), timeout=15)
             return res.success
         except Exception as e:
@@ -80,7 +104,8 @@ class TerminalGRPCClient:
 
     def get_symbol_info_tick(self, symbol: str):
         try:
-            req = terminal_pb2.SymbolRequest(symbol=symbol)
+            resolved = self.resolve_symbol(symbol)
+            req = terminal_pb2.SymbolRequest(symbol=resolved)
             res = self.stub.GetSymbolInfoTick(req, metadata=self._get_metadata(), timeout=5)
             if res.tick_json:
                 return json.loads(res.tick_json)
