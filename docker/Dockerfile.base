@@ -74,7 +74,8 @@ RUN apk add --no-cache --repository http://dl-cdn.alpinelinux.org/alpine/edge/co
     ca-certificates \
     tzdata \
     xdotool \
-    libfaketime && \
+    libfaketime \
+    tini && \
     rm -rf /usr/lib/wine/i386-windows
 
 # Copy the compiled Go supervisord binary
@@ -108,9 +109,10 @@ RUN fc-cache -f
 COPY docker/supervisord.conf /etc/supervisord.conf
 COPY --chown=wine:wine docker/supervisord/startup_guard.sh /opt/metabridge5/startup_guard.sh
 COPY --chown=wine:wine docker/supervisord/vnc_passwd_setup.sh /opt/metabridge5/vnc_passwd_setup.sh
+COPY --chown=wine:wine docker/supervisord/terminal_wrapper.sh /opt/metabridge5/terminal_wrapper.sh
 COPY --chown=wine:wine docker/supervisord/entrypoint.sh /opt/metabridge5/entrypoint.sh
 COPY --chown=wine:wine docker/daemon/ /opt/metabridge5/daemon/
-RUN chmod +x /opt/metabridge5/startup_guard.sh /opt/metabridge5/vnc_passwd_setup.sh /opt/metabridge5/entrypoint.sh
+RUN chmod +x /opt/metabridge5/startup_guard.sh /opt/metabridge5/vnc_passwd_setup.sh /opt/metabridge5/terminal_wrapper.sh /opt/metabridge5/entrypoint.sh
 
 # Copy portable MetaTrader 5 from host (redundant binaries are filtered by .dockerignore)
 COPY --chown=wine:wine MetaTrader5/ /opt/metabridge5/MetaTrader5/
@@ -174,4 +176,5 @@ WORKDIR /home/wine
 
 EXPOSE 5900 50051
 
-ENTRYPOINT ["/usr/bin/supervisord", "-c", "/etc/supervisord.conf"]
+ENTRYPOINT ["/sbin/tini", "--", "/opt/metabridge5/entrypoint.sh"]
+CMD ["/usr/bin/supervisord", "-c", "/etc/supervisord.conf"]

@@ -38,5 +38,8 @@ fi
 export METABRIDGE5_API_KEY="${RESOLVED_API_KEY}"
 export VNC_PASSWORD="${RESOLVED_VNC_PASSWORD}"
 
-# Run the standard supervisord command
-exec /usr/bin/supervisord -c /etc/supervisord.conf
+if [ $# -eq 0 ]; then
+    exec /usr/bin/supervisord -c /etc/supervisord.conf
+else
+    exec "$@"
+fi
