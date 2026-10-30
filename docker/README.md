@@ -69,7 +69,7 @@ flowchart TD
         GoSuper["Compile static lightweight supervisord binary<br/>(ochinchina/supervisord)"]
     end
 
-    subgraph Stage4 ["Stage 4: Final Runtime Base Image (Alpine Edge)"]
+    subgraph Stage4 ["Stage 4: Final Runtime Base Image (Alpine 3.20)"]
         Runtime["Install Wine, Xvfb, x11vnc, gnutls, tzdata, xdotool"]
         CopyBin["Copy Go supervisord binary (/usr/bin/supervisord)"]
         CopyFonts["Copy Microsoft Core Fonts & Rebuild Font Cache"]

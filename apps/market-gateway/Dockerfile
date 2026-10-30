@@ -6,7 +6,7 @@ USER root
 RUN apk add --no-cache python3 py3-pip
 
 # Install Astral-sh uv
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/bin/
+COPY --from=ghcr.io/astral-sh/uv:0.4.30 /uv /uvx /usr/bin/
 
 # Install API requirements natively as root (system-wide)
 COPY apps/market-gateway/pyproject.toml apps/market-gateway/uv.lock /tmp/

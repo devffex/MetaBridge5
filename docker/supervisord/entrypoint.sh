@@ -31,10 +31,24 @@ rm -f "${WINE_PREFIX}/dosdevices/z:"
 
 # Reconcile volume ownership when running with root privileges
 if [ "$(id -u)" = "0" ]; then
-    echo "[entrypoint] Aligning volume permissions with UID ${TARGET_UID}:${TARGET_GID}..."
-    chown -R "${TARGET_UID}:${TARGET_GID}" /home/wine/.wine /home/wine/.vnc
-    if [ -d /home/wine/app ]; then
-        chown -R "${TARGET_UID}:${TARGET_GID}" /home/wine/app
+    CURRENT_WINE_UID=$(id -u wine 2>/dev/null || echo "")
+    CURRENT_WINE_GID=$(id -g wine 2>/dev/null || echo "")
+    if [ -n "${CURRENT_WINE_UID}" ] && [ "${TARGET_UID}" != "${CURRENT_WINE_UID}" ]; then
+        sed -i -e "s/^wine:x:${CURRENT_WINE_UID}:/wine:x:${TARGET_UID}:/" /etc/passwd
+    fi
+    if [ -n "${CURRENT_WINE_GID}" ] && [ "${TARGET_GID}" != "${CURRENT_WINE_GID}" ]; then
+        sed -i -e "s/^wine:x:[0-9]*:${CURRENT_WINE_GID}:/wine:x:${TARGET_UID}:${TARGET_GID}:/" /etc/passwd 2>/dev/null || true
+        sed -i -e "s/^wine:x:${CURRENT_WINE_GID}:/wine:x:${TARGET_GID}:/" /etc/group 2>/dev/null || true
+    fi
+
+    mkdir -p /home/wine/.vnc
+    CURRENT_OWNER=$(stat -c "%u:%g" "${WINE_PREFIX}" 2>/dev/null || echo "")
+    if [ "${CURRENT_OWNER}" != "${TARGET_UID}:${TARGET_GID}" ]; then
+        echo "[entrypoint] Volume ownership mismatch (${CURRENT_OWNER} != ${TARGET_UID}:${TARGET_GID}). Aligning permissions..."
+        chown -R "${TARGET_UID}:${TARGET_GID}" /home/wine/.wine /home/wine/.vnc
+        if [ -d /home/wine/app ]; then
+            chown -R "${TARGET_UID}:${TARGET_GID}" /home/wine/app
+        fi
     fi
 fi
 
