@@ -336,7 +336,9 @@ def get_terminal_logs(
     """
     Retrieves and tails raw MetaTrader 5 daily platform journal logs.
     """
-    log_dir = Path("/home/wine/.wine/drive_c/MetaTrader5/logs")
+    log_dir = Path("/opt/metabridge5/MetaTrader5/logs")
+    if not log_dir.exists():
+        log_dir = Path("/home/wine/.wine/drive_c/MetaTrader5/logs")
     if not log_dir.exists():
         log_dir = Path("MetaTrader5/logs")
 

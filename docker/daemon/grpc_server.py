@@ -382,7 +382,8 @@ class TerminalServiceServicer(terminal_pb2_grpc.TerminalServiceServicer):
 
             logger.info("Initializing MT5 terminal on-demand...")
             _last_init_attempt = now
-            if not mt5.initialize(path="C:\\MetaTrader5\\terminal64.exe", portable=True, timeout=5000):
+            init_path = "M:\\MetaTrader5\\terminal64.exe" if os.path.exists("/opt/metabridge5/MetaTrader5/terminal64.exe") else "C:\\MetaTrader5\\terminal64.exe"
+            if not mt5.initialize(path=init_path, portable=True, timeout=5000):
                 err = mt5.last_error()
                 context.abort(
                     grpc.StatusCode.UNAVAILABLE, f"MT5 initialization failed: {err}"
@@ -809,7 +810,8 @@ class TerminalServiceServicer(terminal_pb2_grpc.TerminalServiceServicer):
             return terminal_pb2.BoolResponse(success=True)
         
         try:
-            cmd = ["C:\\MetaTrader5\\terminal64.exe", "/portable"]
+            terminal_bin = "M:\\MetaTrader5\\terminal64.exe" if os.path.exists("/opt/metabridge5/MetaTrader5/terminal64.exe") else "C:\\MetaTrader5\\terminal64.exe"
+            cmd = [terminal_bin, "/portable"]
             env = os.environ.copy()
             subprocess.Popen(cmd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             return terminal_pb2.BoolResponse(success=True)
@@ -861,7 +863,9 @@ class TerminalServiceServicer(terminal_pb2_grpc.TerminalServiceServicer):
         )
 
     def GetTerminalLogs(self, request, context):
-        logs_dir = Path("/home/wine/.wine/drive_c/MetaTrader5/logs")
+        logs_dir = Path("/opt/metabridge5/MetaTrader5/logs")
+        if not logs_dir.exists():
+            logs_dir = Path("/home/wine/.wine/drive_c/MetaTrader5/logs")
         if not logs_dir.exists():
             context.abort(grpc.StatusCode.NOT_FOUND, "Logs directory not found")
             
@@ -913,7 +917,8 @@ class TerminalServiceServicer(terminal_pb2_grpc.TerminalServiceServicer):
                 error=f"Invalid asset type '{request.asset_type}'. Valid types: {list(asset_type_map.keys())}"
             )
             
-        target_dir = Path("/home/wine/.wine/drive_c/MetaTrader5/MQL5") / asset_type_map[asset_type]
+        base_mql5 = Path("/opt/metabridge5/MetaTrader5/MQL5") if Path("/opt/metabridge5/MetaTrader5").exists() else Path("/home/wine/.wine/drive_c/MetaTrader5/MQL5")
+        target_dir = base_mql5 / asset_type_map[asset_type]
         try:
             target_dir.mkdir(parents=True, exist_ok=True)
             dest_path = target_dir / request.file_name

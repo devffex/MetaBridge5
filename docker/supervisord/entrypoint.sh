@@ -4,6 +4,21 @@
 # ---------------------------------------------------------------
 set -euo pipefail
 
+WINE_PREFIX="${WINEPREFIX:-/home/wine/.wine}"
+SEED_DIR="/opt/wine-seed"
+APP_DIR="/opt/metabridge5"
+
+# Populate fresh volumes from the pre-baked template
+if [ ! -f "${WINE_PREFIX}/system.reg" ]; then
+    echo "[entrypoint] Uninitialized volume detected. Seeding prefix from ${SEED_DIR}..."
+    cp -a "${SEED_DIR}/." "${WINE_PREFIX}/"
+    echo "[entrypoint] Seed deployment completed in sub-second time."
+fi
+
+mkdir -p "${WINE_PREFIX}/dosdevices"
+ln -sfn "${APP_DIR}" "${WINE_PREFIX}/dosdevices/m:"
+rm -f "${WINE_PREFIX}/dosdevices/z:"
+
 # Path where manager mounts tmpfs and writes secrets dynamically
 SECRETS_DIR="/run/secrets"
 API_KEY_FILE="${SECRETS_DIR}/api_key"
