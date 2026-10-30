@@ -12,8 +12,13 @@ RUN apk add --no-cache --repository http://dl-cdn.alpinelinux.org/alpine/edge/co
 # ==========================================
 FROM alpine:3.20 AS python-builder
 
+ARG GRPC_VERSION=1.62.2
+ARG PROTOBUF_VERSION=4.25.3
+ARG NUMPY_VERSION=1.26.4
+ARG PSUTIL_VERSION=5.9.8
+
 RUN apk add --no-cache python3 py3-pip curl unzip && \
-    pip install --no-cache-dir --break-system-packages grpcio-tools
+    pip install --no-cache-dir --break-system-packages grpcio-tools==${GRPC_VERSION}
 
 # 1. Download and extract Windows Python embeddable
 RUN curl -fsSL https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip -o /tmp/python.zip && \
@@ -32,7 +37,7 @@ RUN mkdir -p /tmp/wheels && \
         --python-version 3.11 \
         --implementation cp \
         --abi cp311 \
-        grpcio protobuf numpy MetaTrader5 psutil && \
+        grpcio==${GRPC_VERSION} protobuf==${PROTOBUF_VERSION} numpy==${NUMPY_VERSION} MetaTrader5 psutil==${PSUTIL_VERSION} && \
     for whl in /tmp/wheels/*.whl; do unzip -q -o "$whl" -d /tmp/python/Lib/site-packages/; done && \
     find /tmp/python/Lib/site-packages -type d \( -name "*.dist-info" -o -name "test" -o -name "tests" -o -name "__pycache__" \) -exec rm -rf {} + && \
     rm -rf /tmp/wheels
@@ -114,7 +119,7 @@ COPY --chown=wine:wine docker/supervisord/xvfb_launcher.sh /opt/metabridge5/xvfb
 COPY --chown=wine:wine docker/supervisord/vnc_launcher.sh /opt/metabridge5/vnc_launcher.sh
 COPY --chown=wine:wine docker/supervisord/terminal_wrapper.sh /opt/metabridge5/terminal_wrapper.sh
 COPY --chown=wine:wine docker/supervisord/entrypoint.sh /opt/metabridge5/entrypoint.sh
-COPY --chown=wine:wine docker/daemon/ /opt/metabridge5/daemon/
+COPY --chown=wine:wine docker/daemon/grpc_server.py /opt/metabridge5/daemon/grpc_server.py
 RUN chmod +x /opt/metabridge5/startup_guard.sh /opt/metabridge5/vnc_passwd_setup.sh /opt/metabridge5/xvfb_launcher.sh /opt/metabridge5/vnc_launcher.sh /opt/metabridge5/terminal_wrapper.sh /opt/metabridge5/entrypoint.sh
 
 # Copy portable MetaTrader 5 from host (redundant binaries are filtered by .dockerignore)
