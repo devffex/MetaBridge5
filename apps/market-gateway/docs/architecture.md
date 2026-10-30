@@ -94,8 +94,8 @@ All container services are isolated and orchestrated via `supervisord` (`/etc/su
 
 | Service | Process / Binary | Role | Port |
 |---|---|---|---|
-| **`xvfb`** | `Xvfb :1 -screen 0 1920x1080x16` | Headless virtual X11 display buffer for Wine. | Internal |
-| **`x11vnc`** | `x11vnc -display :1 -rfbauth ...` | Remote desktop server for one-time broker setup. | `5900` |
+| **`xvfb`** | `Xvfb :1 -screen 0 800x600x16 (Headless) / 1280x800x16 (VNC)` | Headless virtual X11 display buffer for Wine. | Internal |
+| **`x11vnc`** | `x11vnc -display :1 ...` | Gated remote desktop server for broker setup (bound to host loopback). | `5900` |
 | **`wine`** | `terminal64.exe /portable` | Native Windows MetaTrader 5 trading terminal. | Outbound |
 | **`api`** | `grpc_server.py 50051` | Windows Python gRPC daemon with `SafeMT5Lock` (64MB message buffers). | `50051` (internal) |
 | **`market-gateway`** | `uvicorn app.main:app --port 8000` | Linux Python REST API, WebSocket broadcaster & pipeline worker. | `8000` |

@@ -161,7 +161,7 @@ docker top metabridge5-market-node
 1. `/usr/bin/supervisord` (Root process manager)
 2. `python3 -m uvicorn app.main:app` (FastAPI / WebSocket gateway)
 3. `C:\python\python.exe C:\daemon\grpc_server.py 50051` (MT5 gRPC daemon)
-4. `Xvfb :1 -screen 0 1920x1080x16` (Virtual display buffer)
+4. `Xvfb :1 -screen 0 800x600x16 (Headless) / 1280x800x16 (VNC)` (Virtual display buffer)
 5. `C:\MetaTrader5\terminal64.exe /portable` (Native MT5 terminal)
-6. `x11vnc -display :1` (TigerVNC remote desktop server)
+6. `x11vnc -display :1` (Conditional remote desktop server, active only when START_VNC=true)
 
