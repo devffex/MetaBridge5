@@ -132,6 +132,17 @@ RUN echo "UTC" > /etc/timezone
 RUN rm -f /opt/metabridge5/MetaTrader5/Config/terminal.lic \
           /opt/metabridge5/MetaTrader5/Config/accounts.dat
 
+# Move mutable MT5 folders into staging for prefix volume and link to persistent path
+RUN mkdir -p /tmp/mt5-data && \
+    for d in Config Bases MQL5 Profiles logs Tester; do \
+        if [ -d /opt/metabridge5/MetaTrader5/$d ]; then \
+            mv /opt/metabridge5/MetaTrader5/$d /tmp/mt5-data/$d; \
+        else \
+            mkdir -p /tmp/mt5-data/$d; \
+        fi && \
+        ln -sfn /home/wine/.wine/drive_c/mt5-data/$d /opt/metabridge5/MetaTrader5/$d; \
+    done
+
 # Create the VNC password directory, set permissions, and pre-bake default passwords
 RUN mkdir -p /home/wine/.vnc && \
     printf "metabridge5pass\nMetabridge5Pass\nMetaBridge5Pass\n" > /home/wine/.vnc/passwdfile && \
@@ -147,7 +158,9 @@ COPY --chown=wine:wine --from=python-builder /tmp/daemon/terminal_pb2*.py /opt/m
 COPY --chown=wine:wine docker/import_certs.py /opt/metabridge5/import_certs.py
 
 # Single command layer: Run Wine initialization, registry setup, and cert import as wine user, then seed
-RUN mkdir -p /home/wine/.wine/dosdevices && \
+RUN mkdir -p /home/wine/.wine/dosdevices /home/wine/.wine/drive_c/mt5-data && \
+    cp -a /tmp/mt5-data/. /home/wine/.wine/drive_c/mt5-data/ && \
+    rm -rf /tmp/mt5-data && \
     ln -sfn /opt/metabridge5 /home/wine/.wine/dosdevices/m: && \
     su -s /bin/bash wine -c 'wineboot --init && \
         wine reg add "HKLM\\Software\\Microsoft\\Cryptography\\Defaults\\Provider Types\\Type 024" /v Name /t REG_SZ /d "Microsoft Enhanced RSA and AES Cryptographic Provider" /f && \
@@ -175,7 +188,11 @@ RUN mkdir -p /home/wine/.wine/dosdevices && \
     chmod 444 /home/wine/.wine/drive_c/users/wine/AppData/Roaming/MetaQuotes/Terminal/BF9336D047DCCACD9080FDBCE04D3DE5/liveupdate && \
     # Seed the initialized Wine prefix template
     cp -a /home/wine/.wine/. /opt/wine-seed/ && \
-    chown -R wine:wine /opt/wine-seed /opt/metabridge5 /home/wine
+    chown -R wine:wine /opt/wine-seed /home/wine && \
+    # Isolate immutable application binaries
+    chown -R root:root /opt/metabridge5 && \
+    chmod -R a-w /opt/metabridge5 && \
+    chmod -R a+rX /opt/metabridge5
 
 
 WORKDIR /home/wine

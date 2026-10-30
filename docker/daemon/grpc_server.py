@@ -863,7 +863,9 @@ class TerminalServiceServicer(terminal_pb2_grpc.TerminalServiceServicer):
         )
 
     def GetTerminalLogs(self, request, context):
-        logs_dir = Path("/opt/metabridge5/MetaTrader5/logs")
+        logs_dir = Path("/home/wine/.wine/drive_c/mt5-data/logs")
+        if not logs_dir.exists():
+            logs_dir = Path("/opt/metabridge5/MetaTrader5/logs")
         if not logs_dir.exists():
             logs_dir = Path("/home/wine/.wine/drive_c/MetaTrader5/logs")
         if not logs_dir.exists():
@@ -917,7 +919,9 @@ class TerminalServiceServicer(terminal_pb2_grpc.TerminalServiceServicer):
                 error=f"Invalid asset type '{request.asset_type}'. Valid types: {list(asset_type_map.keys())}"
             )
             
-        base_mql5 = Path("/opt/metabridge5/MetaTrader5/MQL5") if Path("/opt/metabridge5/MetaTrader5").exists() else Path("/home/wine/.wine/drive_c/MetaTrader5/MQL5")
+        base_mql5 = Path("/home/wine/.wine/drive_c/mt5-data/MQL5")
+        if not base_mql5.parent.exists():
+            base_mql5 = Path("/opt/metabridge5/MetaTrader5/MQL5") if Path("/opt/metabridge5/MetaTrader5").exists() else Path("/home/wine/.wine/drive_c/MetaTrader5/MQL5")
         target_dir = base_mql5 / asset_type_map[asset_type]
         try:
             target_dir.mkdir(parents=True, exist_ok=True)

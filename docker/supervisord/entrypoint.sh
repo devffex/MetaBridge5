@@ -19,6 +19,10 @@ if [ ! -f "${WINE_PREFIX}/system.reg" ]; then
     echo "[entrypoint] Uninitialized volume detected. Seeding prefix from ${SEED_DIR}..."
     cp -a "${SEED_DIR}/." "${WINE_PREFIX}/"
     echo "[entrypoint] Seed deployment completed in sub-second time."
+elif [ ! -d "${WINE_PREFIX}/drive_c/mt5-data" ]; then
+    echo "[entrypoint] Existing volume missing mt5-data. Migrating mt5-data template..."
+    mkdir -p "${WINE_PREFIX}/drive_c"
+    cp -a "${SEED_DIR}/drive_c/mt5-data" "${WINE_PREFIX}/drive_c/"
 fi
 
 mkdir -p "${WINE_PREFIX}/dosdevices"
