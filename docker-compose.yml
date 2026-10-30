@@ -14,6 +14,7 @@ services:
     environment:
       - METABRIDGE5_API_KEY=${METABRIDGE5_API_KEY:-dev_metabridge5_secret_key_123}
       - VNC_PASSWORD=${VNC_PASSWORD:-metabridge5pass}
+      - START_VNC=${START_VNC:-false}
       
       # Storage Backend Strategy: 'github' (Free CDN) | 's3' (Cloudflare R2 / AWS S3) | 'local'
       - STORAGE_BACKEND=${STORAGE_BACKEND:-local}
