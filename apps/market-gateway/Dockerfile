@@ -17,8 +17,6 @@ RUN uv pip install --system --break-system-packages --no-cache -r /tmp/pyproject
 RUN mkdir -p /home/wine/app/market-gateway && \
     chown -R wine:wine /home/wine/app/market-gateway
 
-USER wine
-
 # Copy gateway source code
 COPY --chown=wine:wine apps/market-gateway/app/ /home/wine/app/market-gateway/app/
 
@@ -27,5 +25,5 @@ COPY --chown=wine:wine apps/market-gateway/supervisord.conf /etc/supervisor/conf
 
 EXPOSE 8000
 
-# Entrypoint is inherited from metabridge5-base: /usr/bin/supervisord
+# Entrypoint is inherited from metabridge5-base: /sbin/tini -- /opt/metabridge5/entrypoint.sh
 

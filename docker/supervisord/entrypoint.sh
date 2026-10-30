@@ -4,6 +4,12 @@
 # ---------------------------------------------------------------
 set -euo pipefail
 
+TARGET_UID="${PUID:-1000}"
+TARGET_GID="${PGID:-1000}"
+
+# Purge orphaned X11 lock files from unexpected terminations
+rm -f /tmp/.X1-lock /tmp/.X11-unix/X1
+
 WINE_PREFIX="${WINEPREFIX:-/home/wine/.wine}"
 SEED_DIR="/opt/wine-seed"
 APP_DIR="/opt/metabridge5"
@@ -18,6 +24,15 @@ fi
 mkdir -p "${WINE_PREFIX}/dosdevices"
 ln -sfn "${APP_DIR}" "${WINE_PREFIX}/dosdevices/m:"
 rm -f "${WINE_PREFIX}/dosdevices/z:"
+
+# Reconcile volume ownership when running with root privileges
+if [ "$(id -u)" = "0" ]; then
+    echo "[entrypoint] Aligning volume permissions with UID ${TARGET_UID}:${TARGET_GID}..."
+    chown -R "${TARGET_UID}:${TARGET_GID}" /home/wine/.wine /home/wine/.vnc
+    if [ -d /home/wine/app ]; then
+        chown -R "${TARGET_UID}:${TARGET_GID}" /home/wine/app
+    fi
+fi
 
 # Path where manager mounts tmpfs and writes secrets dynamically
 SECRETS_DIR="/run/secrets"
@@ -38,8 +53,14 @@ fi
 export METABRIDGE5_API_KEY="${RESOLVED_API_KEY}"
 export VNC_PASSWORD="${RESOLVED_VNC_PASSWORD}"
 
+CMD=( "$@" )
 if [ $# -eq 0 ]; then
-    exec /usr/bin/supervisord -c /etc/supervisord.conf
+    CMD=( /usr/bin/supervisord -c /etc/supervisord.conf )
+fi
+
+# Drop privileges if running as root
+if [ "$(id -u)" = "0" ]; then
+    exec su-exec "${TARGET_UID}:${TARGET_GID}" "${CMD[@]}"
 else
-    exec "$@"
+    exec "${CMD[@]}"
 fi

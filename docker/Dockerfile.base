@@ -1,7 +1,7 @@
 # ==========================================
 # STAGE 1: Font Builder
 # ==========================================
-FROM alpine:latest AS font-builder
+FROM alpine:3.20 AS font-builder
 
 RUN apk add --no-cache --repository http://dl-cdn.alpinelinux.org/alpine/edge/community \
     msttcorefonts-installer \
@@ -10,7 +10,7 @@ RUN apk add --no-cache --repository http://dl-cdn.alpinelinux.org/alpine/edge/co
 # ==========================================
 # STAGE 2: Python Builder (Offline Windows Packages)
 # ==========================================
-FROM alpine:latest AS python-builder
+FROM alpine:3.20 AS python-builder
 
 RUN apk add --no-cache python3 py3-pip curl unzip && \
     pip install --no-cache-dir --break-system-packages grpcio-tools
@@ -49,7 +49,7 @@ RUN mkdir -p /tmp/daemon && \
 # ==========================================
 # STAGE 3: Go Supervisor Builder
 # ==========================================
-FROM golang:alpine AS supervisor-builder
+FROM golang:1.22-alpine3.20 AS supervisor-builder
 RUN apk add --no-cache git && \
     git clone https://github.com/ochinchina/supervisord.git /src && \
     cd /src && \
@@ -60,10 +60,10 @@ RUN apk add --no-cache git && \
 # ==========================================
 # STAGE 4: Final Runtime Base Image
 # ==========================================
-FROM alpine:latest
+FROM alpine:3.20
 
 # Combine apk packages to reduce layer overhead (Removed curl, unzip, supervisor, python3)
-RUN apk add --no-cache --repository http://dl-cdn.alpinelinux.org/alpine/edge/community \
+RUN apk add --no-cache \
     bash \
     xvfb \
     freetype \
@@ -75,7 +75,8 @@ RUN apk add --no-cache --repository http://dl-cdn.alpinelinux.org/alpine/edge/co
     tzdata \
     xdotool \
     libfaketime \
-    tini && \
+    tini \
+    su-exec && \
     rm -rf /usr/lib/wine/i386-windows
 
 # Copy the compiled Go supervisord binary
@@ -172,8 +173,6 @@ RUN mkdir -p /home/wine/.wine/dosdevices && \
     chown -R wine:wine /opt/wine-seed /opt/metabridge5 /home/wine
 
 
-# Switch to the wine user for container runtime execution
-USER wine
 WORKDIR /home/wine
 
 EXPOSE 5900 50051
