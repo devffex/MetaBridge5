@@ -1,27 +1,3 @@
-# Pull Request Specification
-
-<!-- 
-Metadata block following structured-spec standard.
-Fill this header for architectural traceability.
--->
-
----
-id: metabridge5-pr-runtime-optimizations
-name: MetaBridge5 Runtime Bottlenecks & Production Optimizations
-type: spec
-category: runtime
-description: >-
-  Authoritative specification of runtime fixes, container hardening, process lifecycle orchestration, and build optimizations.
-title: MetaBridge5 Runtime Bottlenecks & Production Optimizations
-status: proposed
-created_at: 2026-10-30T18:50:00-04:00
-author: Engineering Team
-tags: ["docker", "wine", "metatrader5", "grpc", "supervisord", "xvfb", "x11vnc", "alpine"]
-tech_stack: ["bash", "docker", "python", "wine", "golang", "supervisord", "alpine"]
-compatible_agents: ["all"]
-version: 1.0.0
----
-
 # Runtime Bottlenecks & Production Optimizations
 
 This pull request resolves runtime bottlenecks and applies production hardening across the MetaBridge5 container stack.
