@@ -61,8 +61,8 @@ flowchart TD
 
     subgraph Stage2 ["Stage 2: Python Builder (Alpine)"]
         WinPy["Download Windows Python 3.11 Embeddable"]
-        Wheels["Pre-download Windows AMD64 Binary Wheels<br/>(grpcio, protobuf, numpy, pandas, MetaTrader5, tzdata, pytz, psutil)"]
-        Bootstrap["Unpack pip/setuptools/wheel into site-packages"]
+        Wheels["Download Windows AMD64 Binary Wheels<br/>(grpcio, protobuf, numpy, MetaTrader5, psutil)"]
+        Bootstrap["Unpack wheels natively on Linux & generate gRPC stubs"]
     end
 
     subgraph Stage3 ["Stage 3: Go Supervisor Builder (Golang Alpine)"]
@@ -76,9 +76,9 @@ flowchart TD
         CopyScripts["Copy Base Supervisor configs & startup scripts"]
         CopyMT5["Copy Portable MetaTrader 5 (C:\\MetaTrader5)"]
         CopyWinPy["Copy Windows Python 3.11 Runtime (C:\\python)"]
-        CopyDaemon["Copy gRPC Daemon Source (C:\\daemon)"]
+        CopyDaemon["Copy gRPC Daemon Source & Generated Stubs (C:\\daemon)"]
         
-        MountInstall["Single RUN Layer with BuildKit Bind Mount:<br/>• Init Wine Prefix (wineboot --init)<br/>• Import Root Certificates (import_certs.py)<br/>• Offline Wheel Installation (pip install --find-links)<br/>• Generate Protobuf Stubs (codegen.py)<br/>• Uninstall Build Tools (grpcio-tools, pip, setuptools)<br/>• Prune Tests, __pycache__, and Unused DLLs<br/>• Strip Z:\\ Root Symlink & Lock liveupdate"]
+        MountInstall["Single RUN Layer:<br/>• Init Wine Prefix (wineboot --init)<br/>• Import Root Certificates (import_certs.py)<br/>• Prune __pycache__ and Unused DLLs<br/>• Strip Z:\\ Root Symlink & Lock liveupdate"]
     end
 
     Stage1 --> Stage4

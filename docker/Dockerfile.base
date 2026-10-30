@@ -12,31 +12,37 @@ RUN apk add --no-cache --repository http://dl-cdn.alpinelinux.org/alpine/edge/co
 # ==========================================
 FROM alpine:latest AS python-builder
 
-RUN apk add --no-cache python3 py3-pip curl unzip
+RUN apk add --no-cache python3 py3-pip curl unzip && \
+    pip install --no-cache-dir --break-system-packages grpcio-tools
 
 # 1. Download and extract Windows Python embeddable
-RUN curl -L https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip -o /tmp/python.zip && \
+RUN curl -fsSL https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip -o /tmp/python.zip && \
     mkdir -p /tmp/python/Lib/site-packages && \
-    unzip /tmp/python.zip -d /tmp/python && \
-    rm /tmp/python.zip
+    unzip -q /tmp/python.zip -d /tmp/python && \
+    rm /tmp/python.zip && \
+    sed -i 's/#import site/import site/' /tmp/python/python311._pth && \
+    echo ".\\Lib\\site-packages" >> /tmp/python/python311._pth && \
+    echo "..\\daemon" >> /tmp/python/python311._pth
 
-# 2. Enable site-packages in Windows Python
-RUN sed -i 's/#import site/import site/' /tmp/python/python311._pth
-
-# 3. Download all required Windows amd64 wheels (including pip, setuptools, and wheel)
+# 2. Download and unpack Windows amd64 wheels directly on native Linux (no pandas/tzdata/pytz/pip/setuptools)
 RUN mkdir -p /tmp/wheels && \
     pip download --dest /tmp/wheels \
-    --only-binary=:all: \
-    --platform win_amd64 \
-    --python-version 3.11 \
-    --implementation cp \
-    --abi cp311 \
-    grpcio grpcio-tools protobuf numpy pandas MetaTrader5 pip setuptools wheel tzdata pytz psutil
+        --only-binary=:all: \
+        --platform win_amd64 \
+        --python-version 3.11 \
+        --implementation cp \
+        --abi cp311 \
+        grpcio protobuf numpy MetaTrader5 psutil && \
+    for whl in /tmp/wheels/*.whl; do unzip -q -o "$whl" -d /tmp/python/Lib/site-packages/; done && \
+    find /tmp/python/Lib/site-packages -type d \( -name "*.dist-info" -o -name "test" -o -name "tests" -o -name "__pycache__" \) -exec rm -rf {} + && \
+    rm -rf /tmp/wheels
 
-# 4. Bootstrap pip, setuptools, and wheel offline by unzipping their wheels into site-packages
-RUN unzip -o /tmp/wheels/pip-*.whl -d /tmp/python/Lib/site-packages/ && \
-    unzip -o /tmp/wheels/setuptools-*.whl -d /tmp/python/Lib/site-packages/ && \
-    unzip -o /tmp/wheels/wheel-*.whl -d /tmp/python/Lib/site-packages/
+# 3. Generate gRPC stubs natively on Linux
+COPY docker/daemon/protos /tmp/daemon/protos
+RUN mkdir -p /tmp/daemon && \
+    python3 -m grpc_tools.protoc -I/tmp/daemon/protos \
+        --python_out=/tmp/daemon --grpc_python_out=/tmp/daemon \
+        /tmp/daemon/protos/terminal.proto
 
 
 
@@ -123,35 +129,24 @@ RUN mkdir -p /home/wine/.vnc && \
     chmod 600 /home/wine/.vnc/passwdfile /home/wine/.vnc/passwd && \
     chown -R wine:wine /home/wine/.vnc
 
-# Copy Python runtime base (from python-builder)
+# Copy Python runtime base and generated stubs (from python-builder)
 COPY --chown=wine:wine --from=python-builder /tmp/python/ /home/wine/.wine/drive_c/python/
+COPY --chown=wine:wine --from=python-builder /tmp/daemon/terminal_pb2*.py /home/wine/.wine/drive_c/daemon/
 
 # Copy certificate importer script
 COPY --chown=wine:wine docker/import_certs.py /home/wine/.wine/drive_c/import_certs.py
 
-# Single command layer: Run setup commands as wine user, then prune system and prefix files as root
-RUN --mount=type=bind,from=python-builder,source=/tmp/wheels,target=/home/wine/.wine/drive_c/wheels \
-    # 1. Run Wine initialization, registry setup, package installation, cert imports, and codegen as wine user
-    su -s /bin/bash wine -c 'wineboot --init && \
+# Single command layer: Run Wine initialization, registry setup, and cert import as wine user, then prune
+RUN su -s /bin/bash wine -c 'wineboot --init && \
         wine reg add "HKLM\\Software\\Microsoft\\Cryptography\\Defaults\\Provider Types\\Type 024" /v Name /t REG_SZ /d "Microsoft Enhanced RSA and AES Cryptographic Provider" /f && \
         wine reg add "HKLM\\Software\\Microsoft\\Cryptography\\Defaults\\Provider Types\\Type 024" /v TypeName /t REG_SZ /d "RSA Full and AES" /f && \
         wine reg add "HKLM\\Software\\Microsoft\\Cryptography\\Defaults\\Provider\\Microsoft Enhanced RSA and AES Cryptographic Provider" /v "Image Path" /t REG_SZ /d "rsaenh.dll" /f && \
         wine reg add "HKLM\\Software\\Microsoft\\Cryptography\\Defaults\\Provider\\Microsoft Enhanced RSA and AES Cryptographic Provider" /v Type /t REG_DWORD /d 24 /f && \
         wine reg add "HKLM\\Software\\Microsoft\\Cryptography\\Defaults\\Provider\\Microsoft Enhanced RSA and AES Cryptographic Provider" /v SigInFile /t REG_DWORD /d 0 /f && \
-        wine C:\\python\\python.exe -m pip install --no-cache-dir --no-index --find-links C:\\wheels \
-            grpcio grpcio-tools protobuf numpy pandas MetaTrader5 tzdata pytz psutil && \
         wine C:\\python\\python.exe C:\\import_certs.py && \
-        wine C:\\python\\python.exe C:\\daemon\\codegen.py && \
-        wine C:\\python\\python.exe -m pip uninstall -y grpcio-tools && \
         wineserver -w' && \
     # 2. Reclaim ownership and delete cert script (now back as root)
     rm -f /home/wine/.wine/drive_c/import_certs.py && \
-    # Remove Pip/Setuptools/Wheel files
-    rm -rf /home/wine/.wine/drive_c/python/Lib/site-packages/pip* \
-           /home/wine/.wine/drive_c/python/Lib/site-packages/setuptools* \
-           /home/wine/.wine/drive_c/python/Lib/site-packages/wheel* && \
-    # Remove test folders recursively
-    find /home/wine/.wine/drive_c/python/Lib/site-packages -type d \( -name "test" -o -name "tests" \) -exec rm -rf {} + && \
     # Remove pycache recursively
     find /home/wine/.wine/drive_c/python -type d -name "__pycache__" -exec rm -rf {} + && \
     # Remove intermediate wineserver build-time socket files
