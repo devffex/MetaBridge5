@@ -8,12 +8,14 @@ services:
     image: metabridge5-market-node:latest
     container_name: metabridge5-market-node
     restart: unless-stopped
+    stop_grace_period: 45s
     ports:
       - "8000:8000"   # Market Gateway REST, WebSockets & Prometheus Telemetry (/metrics)
-      - "5900:5900"   # VNC Remote Desktop (MetaTrader 5 visual setup/auth)
+      - "127.0.0.1:5900:5900"   # VNC Remote Desktop (MetaTrader 5 visual setup/auth)
     environment:
       - METABRIDGE5_API_KEY=${METABRIDGE5_API_KEY:-dev_metabridge5_secret_key_123}
       - VNC_PASSWORD=${VNC_PASSWORD:-metabridge5pass}
+      - START_VNC=${START_VNC:-false}
       
       # Storage Backend Strategy: 'github' (Free CDN) | 's3' (Cloudflare R2 / AWS S3) | 'local'
       - STORAGE_BACKEND=${STORAGE_BACKEND:-local}

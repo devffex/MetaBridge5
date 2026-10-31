@@ -1,140 +1,215 @@
+from __future__ import annotations
+
 import io
 import json
 import logging
 from typing import Any
 
-import pandas as pd
-import pyarrow as pa
-import pyarrow.parquet as pq
+import arro3.core as ac
+import arro3.io as aio
 
 logger = logging.getLogger("pipeline.parquet_exporter")
 
-# Schema for historical candle datasets
-CANDLE_ARROW_SCHEMA = pa.schema(
-    [
-        pa.field("time", pa.int64(), nullable=False),
-        pa.field("open", pa.float64(), nullable=False),
-        pa.field("high", pa.float64(), nullable=False),
-        pa.field("low", pa.float64(), nullable=False),
-        pa.field("close", pa.float64(), nullable=False),
-        pa.field("tick_volume", pa.int64(), nullable=False),
-    ]
-)
+CANDLE_COLUMNS = ["time", "open", "high", "low", "close", "tick_volume"]
 
 
-def rates_to_dataframe(rates: list[dict[str, Any]]) -> pd.DataFrame:
+class _IlocIndexer:
+    def __init__(self, frame: CandleFrame):
+        self._frame = frame
+
+    def __getitem__(self, idx: int | slice) -> dict[str, Any] | CandleFrame:
+        if isinstance(idx, slice):
+            return CandleFrame(self._frame._records[idx])
+        return self._frame._records[idx]
+
+
+class _ValuesWrapper:
+    def __init__(self, records: list[dict[str, Any]]):
+        self._records = records
+
+    def tolist(self) -> list[list[Any]]:
+        return [
+            [
+                int(r["time"]),
+                float(r["open"]),
+                float(r["high"]),
+                float(r["low"]),
+                float(r["close"]),
+                int(r.get("tick_volume", 0)),
+            ]
+            for r in self._records
+        ]
+
+
+class CandleFrame:
     """
-    Converts MT5 rates list of dictionaries into a normalized, sorted,
-    and deduplicated pandas DataFrame.
+    Lightweight, high-performance in-memory candle table replacing pandas/pyarrow.
+    Provides dict-like indexer compatibility (.iloc, .columns, len()) and zero-copy
+    conversions to compact JSON and Apache Parquet via arro3.
     """
+
+    def __init__(self, records: list[dict[str, Any]] | None = None):
+        self._records: list[dict[str, Any]] = list(records) if records else []
+
+    @property
+    def columns(self) -> list[str]:
+        return list(CANDLE_COLUMNS)
+
+    def __len__(self) -> int:
+        return len(self._records)
+
+    def __getitem__(self, key: Any) -> Any:
+        if isinstance(key, list):
+            return self
+        if isinstance(key, str):
+            return [r.get(key) for r in self._records]
+        raise TypeError(f"Invalid CandleFrame subscription key: {key}")
+
+    @property
+    def iloc(self) -> _IlocIndexer:
+        return _IlocIndexer(self)
+
+    @property
+    def values(self) -> _ValuesWrapper:
+        return _ValuesWrapper(self._records)
+
+    def to_compact_json_bytes(self, limit: int | None = None) -> bytes:
+        if limit is not None and limit > 0 and len(self._records) > limit:
+            selected = self._records[-limit:]
+        else:
+            selected = self._records
+
+        formatted = [
+            [
+                int(r["time"]),
+                round(float(r["open"]), 5),
+                round(float(r["high"]), 5),
+                round(float(r["low"]), 5),
+                round(float(r["close"]), 5),
+                int(r.get("tick_volume", 0)),
+            ]
+            for r in selected
+        ]
+        return json.dumps(formatted, separators=(",", ":")).encode("utf-8")
+
+    def to_arrow_table(self) -> ac.Table:
+        times = [int(r["time"]) for r in self._records]
+        opens = [float(r["open"]) for r in self._records]
+        highs = [float(r["high"]) for r in self._records]
+        lows = [float(r["low"]) for r in self._records]
+        closes = [float(r["close"]) for r in self._records]
+        volumes = [int(r.get("tick_volume", 0)) for r in self._records]
+
+        data = {
+            "time": ac.Array(times, type=ac.DataType.int64()),
+            "open": ac.Array(opens, type=ac.DataType.float64()),
+            "high": ac.Array(highs, type=ac.DataType.float64()),
+            "low": ac.Array(lows, type=ac.DataType.float64()),
+            "close": ac.Array(closes, type=ac.DataType.float64()),
+            "tick_volume": ac.Array(volumes, type=ac.DataType.int64()),
+        }
+        return ac.Table.from_pydict(data)
+
+
+def rates_to_dataframe(rates: list[dict[str, Any]] | CandleFrame) -> CandleFrame:
+    """
+    Converts MT5 rates list into a normalized, sorted, and deduplicated CandleFrame.
+    Preserves last-write-wins semantics for duplicate timestamps.
+    """
+    if isinstance(rates, CandleFrame):
+        return rates
+
     if not rates:
-        return pd.DataFrame(columns=["time", "open", "high", "low", "close", "tick_volume"])
+        return CandleFrame([])
 
-    df = pd.DataFrame(rates)
+    by_time: dict[int, dict[str, Any]] = {}
+    for r in rates:
+        # Standardize volume naming
+        raw_vol = r.get("tick_volume") if "tick_volume" in r else r.get("volume", 0)
 
-    # Standardize column names
-    col_mapping = {
-        "time": "time",
-        "open": "open",
-        "high": "high",
-        "low": "low",
-        "close": "close",
-        "tick_volume": "tick_volume",
-        "volume": "tick_volume",
-    }
-    df = df.rename(columns={k: v for k, v in col_mapping.items() if k in df.columns})
+        # Validate required fields
+        for req in ("time", "open", "high", "low", "close"):
+            if req not in r:
+                raise ValueError(f"Missing required candle column: {req}")
 
-    # Ensure required columns exist
-    for col in ["time", "open", "high", "low", "close"]:
-        if col not in df.columns:
-            raise ValueError(f"Missing required candle column: {col}")
-    if "tick_volume" not in df.columns:
-        df["tick_volume"] = 0
+        t = int(r["time"])
+        by_time[t] = {
+            "time": t,
+            "open": float(r["open"]),
+            "high": float(r["high"]),
+            "low": float(r["low"]),
+            "close": float(r["close"]),
+            "tick_volume": int(raw_vol),
+        }
 
-    # Type casting
-    df["time"] = df["time"].astype("int64")
-    df["open"] = df["open"].astype("float64")
-    df["high"] = df["high"].astype("float64")
-    df["low"] = df["low"].astype("float64")
-    df["close"] = df["close"].astype("float64")
-    df["tick_volume"] = df["tick_volume"].astype("int64")
-
-    # Deduplicate and sort strictly ascending by timestamp
-    df = df.drop_duplicates(subset=["time"], keep="last")
-    df = df.sort_values(by="time", ascending=True).reset_index(drop=True)
-
-    return df[["time", "open", "high", "low", "close", "tick_volume"]]
+    sorted_records = [by_time[t] for t in sorted(by_time.keys())]
+    return CandleFrame(sorted_records)
 
 
-def dataframe_to_parquet_bytes(df: pd.DataFrame, compression: str = "snappy") -> bytes:
+def dataframe_to_parquet_bytes(df: CandleFrame, compression: str = "snappy") -> bytes:
     """
-    Serializes DataFrame into compressed Apache Parquet binary bytes.
+    Serializes CandleFrame into compressed Apache Parquet binary bytes using arro3.
     """
-    table = pa.Table.from_pandas(df, schema=CANDLE_ARROW_SCHEMA, preserve_index=False)
+    table = df.to_arrow_table()
     buf = io.BytesIO()
-    pq.write_table(
-        table,
-        buf,
-        compression=compression,
-        use_dictionary=True,
-        write_statistics=True,
-    )
+    aio.write_parquet(table, buf, compression=compression)
     return buf.getvalue()
 
 
-def parquet_bytes_to_dataframe(data: bytes) -> pd.DataFrame:
+def parquet_bytes_to_dataframe(data: bytes) -> CandleFrame:
     """
-    Reads Parquet bytes into a pandas DataFrame.
+    Reads Parquet bytes into a CandleFrame using arro3.
     """
     buf = io.BytesIO(data)
-    table = pq.read_table(buf)
-    return table.to_pandas()
+    reader = aio.read_parquet(buf)
+    table = reader.read_all()
+
+    times = table.column("time").to_pylist()
+    opens = table.column("open").to_pylist()
+    highs = table.column("high").to_pylist()
+    lows = table.column("low").to_pylist()
+    closes = table.column("close").to_pylist()
+    volumes = table.column("tick_volume").to_pylist()
+
+    records = [
+        {
+            "time": t,
+            "open": o,
+            "high": h,
+            "low": l,
+            "close": c,
+            "tick_volume": v,
+        }
+        for t, o, h, l, c, v in zip(times, opens, highs, lows, closes, volumes, strict=True)
+    ]
+    return CandleFrame(records)
 
 
-def dataframe_to_compact_json_bytes(df: pd.DataFrame, limit: int | None = None) -> bytes:
+def dataframe_to_compact_json_bytes(df: CandleFrame, limit: int | None = None) -> bytes:
     """
     Serializes candle DataFrame into compact JSON format (Array of Arrays)
     Format: [[time, open, high, low, close, volume], ...]
     """
-    if limit is not None and limit > 0 and len(df) > limit:
-        df = df.iloc[-limit:]
-
-    records = df[["time", "open", "high", "low", "close", "tick_volume"]].values.tolist()
-    # Format floats cleanly
-    formatted_records = [
-        [
-            int(r[0]),
-            round(float(r[1]), 5),
-            round(float(r[2]), 5),
-            round(float(r[3]), 5),
-            round(float(r[4]), 5),
-            int(r[5]),
-        ]
-        for r in records
-    ]
-    return json.dumps(formatted_records, separators=(",", ":")).encode("utf-8")
+    return df.to_compact_json_bytes(limit=limit)
 
 
 def merge_rates_with_parquet(
     existing_parquet_bytes: bytes | None,
-    new_rates: list[dict[str, Any]],
-) -> pd.DataFrame:
+    new_rates: list[dict[str, Any]] | CandleFrame,
+) -> CandleFrame:
     """
     Merges newly fetched candle rates with existing Parquet dataset,
     ensuring idempotency, deduplication, and strictly ascending timestamp ordering.
     """
-    new_df = rates_to_dataframe(new_rates)
+    new_frame = rates_to_dataframe(new_rates)
 
     if not existing_parquet_bytes:
-        return new_df
+        return new_frame
 
     try:
-        existing_df = parquet_bytes_to_dataframe(existing_parquet_bytes)
-        combined_df = pd.concat([existing_df, new_df], ignore_index=True)
-        # Drop duplicates by time keeping the newest/last records
-        combined_df = combined_df.drop_duplicates(subset=["time"], keep="last")
-        combined_df = combined_df.sort_values(by="time", ascending=True).reset_index(drop=True)
-        return combined_df
-    except Exception as e:
+        existing_frame = parquet_bytes_to_dataframe(existing_parquet_bytes)
+        combined_records = existing_frame._records + new_frame._records
+        return rates_to_dataframe(combined_records)
+    except (Exception, BaseException) as e:
         logger.error(f"Error parsing existing Parquet bytes during merge: {e}. Using new data.")
-        return new_df
+        return new_frame

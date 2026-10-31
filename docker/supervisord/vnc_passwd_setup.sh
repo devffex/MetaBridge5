@@ -5,6 +5,11 @@
 # ---------------------------------------------------------------
 set -euo pipefail
 
+if [ "${START_VNC:-false}" != "true" ]; then
+    echo "[vnc_passwd_setup] VNC disabled (START_VNC != true). Skipping password setup."
+    exit 0
+fi
+
 PASSWD_DIR="/home/wine/.vnc"
 PASSWD_FILE="${PASSWD_DIR}/passwd"
 PASSWDFILE_LIST="${PASSWD_DIR}/passwdfile"

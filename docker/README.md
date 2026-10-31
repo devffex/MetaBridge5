@@ -61,24 +61,24 @@ flowchart TD
 
     subgraph Stage2 ["Stage 2: Python Builder (Alpine)"]
         WinPy["Download Windows Python 3.11 Embeddable"]
-        Wheels["Pre-download Windows AMD64 Binary Wheels<br/>(grpcio, protobuf, numpy, pandas, MetaTrader5, tzdata, pytz, psutil)"]
-        Bootstrap["Unpack pip/setuptools/wheel into site-packages"]
+        Wheels["Download Windows AMD64 Binary Wheels<br/>(grpcio, protobuf, numpy, MetaTrader5, psutil)"]
+        Bootstrap["Unpack wheels natively on Linux & generate gRPC stubs"]
     end
 
     subgraph Stage3 ["Stage 3: Go Supervisor Builder (Golang Alpine)"]
         GoSuper["Compile static lightweight supervisord binary<br/>(ochinchina/supervisord)"]
     end
 
-    subgraph Stage4 ["Stage 4: Final Runtime Base Image (Alpine Edge)"]
+    subgraph Stage4 ["Stage 4: Final Runtime Base Image (Alpine 3.20)"]
         Runtime["Install Wine, Xvfb, x11vnc, gnutls, tzdata, xdotool"]
         CopyBin["Copy Go supervisord binary (/usr/bin/supervisord)"]
         CopyFonts["Copy Microsoft Core Fonts & Rebuild Font Cache"]
         CopyScripts["Copy Base Supervisor configs & startup scripts"]
         CopyMT5["Copy Portable MetaTrader 5 (C:\\MetaTrader5)"]
         CopyWinPy["Copy Windows Python 3.11 Runtime (C:\\python)"]
-        CopyDaemon["Copy gRPC Daemon Source (C:\\daemon)"]
+        CopyDaemon["Copy gRPC Daemon Source & Generated Stubs (C:\\daemon)"]
         
-        MountInstall["Single RUN Layer with BuildKit Bind Mount:<br/>• Init Wine Prefix (wineboot --init)<br/>• Import Root Certificates (import_certs.py)<br/>• Offline Wheel Installation (pip install --find-links)<br/>• Generate Protobuf Stubs (codegen.py)<br/>• Uninstall Build Tools (grpcio-tools, pip, setuptools)<br/>• Prune Tests, __pycache__, and Unused DLLs<br/>• Strip Z:\\ Root Symlink & Lock liveupdate"]
+        MountInstall["Single RUN Layer:<br/>• Init Wine Prefix (wineboot --init)<br/>• Import Root Certificates (import_certs.py)<br/>• Prune __pycache__ and Unused DLLs<br/>• Strip Z:\\ Root Symlink & Lock liveupdate"]
     end
 
     Stage1 --> Stage4
@@ -107,21 +107,25 @@ docker/
 │   └── test_client.py      # Host verification script for gRPC daemon
 │
 └── supervisord/            # Base startup and lifecycle scripts
-    ├── entrypoint.sh       # Container entrypoint
+    ├── entrypoint.sh       # Container entrypoint with Tini init and dynamic UID remapping
     ├── startup_guard.sh    # Pre-boot environment validator
-    └── vnc_passwd_setup.sh # Configures VNC authentication for GUI access
+    ├── terminal_wrapper.sh # Signal-trapping MT5 execution wrapper
+    ├── vnc_launcher.sh     # Conditional VNC server launcher
+    ├── vnc_passwd_setup.sh # Configures VNC authentication for GUI access
+    └── xvfb_launcher.sh    # Conditional virtual display framebuffer launcher
 ```
 
 ---
 
 ## 4. Security & Optimization Features
 
-1. **Non-Root Execution**: Runs under the dedicated unprivileged user `wine` (UID `1000`).
-2. **Filesystem Traversal Insulation (`Z:\` Drive Deletion)**: Wine automatically creates a symlink `Z:\ -> /` pointing to the Linux root filesystem. This symlink is **permanently deleted during build** to prevent sandbox escapes from the Wine layer.
-3. **Disabled LiveUpdate**: MetaTrader 5 `liveupdate` directories in the installation and `AppData` paths are locked to read-only files (`chmod 444`), preventing unmanaged in-flight updates in production.
-4. **No Build-Tool Leaks**: `pip`, `setuptools`, `wheel`, and `grpcio-tools` are uninstalled and deleted from the image after compile time.
-5. **No Linux Python Supervisor Overhead**: Compiling the Go-based `supervisord` binary avoids installing standard Linux `python3` and `setuptools` just for process management (saving ~45 MB).
-6. **Zero Bytecode Write Bloat**: Configured with `ENV PYTHONDONTWRITEBYTECODE=1` and `WINEDEBUG=-all`.
+1. **Native Wheel Extraction & Codegen**: Binary Windows wheels are extracted and gRPC protobuf stubs are compiled natively on Linux in builder stages, avoiding emulated installers in Wine.
+2. **Immutable Binary Storage (`/opt/metabridge5`)**: Static binaries are isolated in `/opt/metabridge5` and mapped to virtual drive `M:`, preventing volume mounts from masking application code.
+3. **Sub-Second Prefix Seeding**: Pre-baked Wine prefix template in `/opt/wine-seed` enables sub-second cold starts with cryptographic providers pre-registered.
+4. **Filesystem Traversal Insulation (`Z:\` Drive Deletion)**: Root traversal symlink `Z:\ -> /` is permanently removed on container boot.
+5. **Disabled LiveUpdate**: MetaTrader 5 `liveupdate` directories in the installation and `AppData` paths are locked to read-only files (`chmod 444`).
+6. **Init Process Reaping**: Uses `tini` as PID 1 to reap zombie processes and forward termination signals cleanly.
+7. **Zero Bytecode Write Bloat**: Configured with `ENV PYTHONDONTWRITEBYTECODE=1` and `WINEDEBUG=-all`.
 
 ---
 

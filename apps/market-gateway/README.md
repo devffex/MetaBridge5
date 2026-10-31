@@ -158,7 +158,7 @@ make build-market-node
 docker run -it --rm --name metabridge5-market-node \
   -p 8000:8000 \
   -p 5900:5900 \
-  -v metabridge5_mt5_data:/home/wine/.wine/drive_c/MetaTrader5 \
+  -v metabridge5_wine_data:/home/wine/.wine \
   -e METABRIDGE5_API_KEY="your_secret_api_key_here" \
   -e VNC_PASSWORD="your_vnc_password_here" \
   -e STORAGE_BACKEND="github" \

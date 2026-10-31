@@ -25,8 +25,10 @@ build-all: build-base build-market-node
 run-market-node:
 	docker run -it --rm \
 		--name metabridge5-market-node-run \
+		--stop-timeout 45 \
 		-p 8000:8000 \
-		-p 5900:5900 \
+		-p 127.0.0.1:5900:5900 \
+		-e START_VNC="true" \
 		-e METABRIDGE5_API_KEY="test-api-key" \
 		-e VNC_PASSWORD="test-vnc-password" \
 		-e STORAGE_BACKEND="local" \
@@ -39,8 +41,10 @@ run-node: run-market-node
 run-base:
 	docker run -it --rm \
 		--name metabridge5-base-run \
+		--stop-timeout 45 \
 		-p 50051:50051 \
-		-p 5900:5900 \
+		-p 127.0.0.1:5900:5900 \
+		-e START_VNC="true" \
 		-e VNC_PASSWORD="test-vnc-password" \
 		metabridge5-base:latest
 

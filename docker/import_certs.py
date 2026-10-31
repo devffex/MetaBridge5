@@ -29,8 +29,11 @@ crypt32.CertAddEncodedCertificateToStore.argtypes = [
 ]
 crypt32.CertAddEncodedCertificateToStore.restype = ctypes.c_bool
 
-# Load ca-certificates.crt from Unix path mapped in Wine (Z:\etc\ssl\certs\ca-certificates.crt)
-unix_cert_path = r"Z:\etc\ssl\certs\ca-certificates.crt"
+# Load ca-certificates.crt from local drive C: or Unix root path mapped in Wine
+if os.path.exists(r"C:\ca-certificates.crt"):
+    unix_cert_path = r"C:\ca-certificates.crt"
+else:
+    unix_cert_path = r"Z:\etc\ssl\certs\ca-certificates.crt"
 
 if not os.path.exists(unix_cert_path):
     print(f"Cert file not found: {unix_cert_path}")
