@@ -23,6 +23,8 @@ def client():
     ]
     mock_grpc.select_symbol.return_value = True
     mock_grpc.get_symbol_info_tick.return_value = None
+    mock_grpc.is_connected = True
+    mock_grpc.get_terminal_logs.side_effect = Exception("Fallback to disk")
 
     def mock_get_symbols(group="", selected_only=False):
         all_syms = [
@@ -240,6 +242,29 @@ def test_terminal_logs_endpoint(client, tmp_path):
         assert "lines" in logs_data
         assert logs_data["returned_lines"] == 2
         assert "MetaTrader 5" in logs_data["lines"][0]
+
+
+def test_terminal_logs_via_grpc(client):
+    main_mod.grpc_client.get_terminal_logs.side_effect = None
+    main_mod.grpc_client.get_terminal_logs.return_value = {
+        "file": "20261030.log",
+        "total_lines": 5,
+        "returned_lines": 2,
+        "logs": ["Line 1 over gRPC", "Line 2 over gRPC"],
+    }
+    res = client.get("/api/v1/terminal/logs?lines=2", headers={"X-API-Key": "test_key_123"})
+    assert res.status_code == 200
+    data = res.json()
+    assert data["file"] == "20261030.log"
+    assert data["returned_lines"] == 2
+    assert data["lines"] == ["Line 1 over gRPC", "Line 2 over gRPC"]
+
+
+def test_readiness_probe_grpc_disconnected(client):
+    main_mod.grpc_client.is_connected = False
+    res = client.get("/ready")
+    assert res.status_code == 503
+    main_mod.grpc_client.is_connected = True
 
 
 @pytest.mark.asyncio

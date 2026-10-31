@@ -15,16 +15,37 @@ logger = logging.getLogger("market_gateway.grpc_client")
 
 class TerminalGRPCClient:
     def __init__(self):
-        server_address = os.environ.get("MT5_GRPC_SERVER", "127.0.0.1:50051")
+        host = os.environ.get("TERMINAL_GRPC_HOST")
+        port = os.environ.get("TERMINAL_GRPC_PORT", "50051")
+        if host:
+            server_address = f"{host}:{port}"
+        else:
+            server_address = os.environ.get("MT5_GRPC_SERVER", "127.0.0.1:50051")
         self.api_key = os.environ.get("METABRIDGE5_API_KEY", "")
 
         logger.info(f"Connecting to MT5 gRPC server at {server_address}...")
         options = [
             ("grpc.max_send_message_length", 64 * 1024 * 1024),
             ("grpc.max_receive_message_length", 64 * 1024 * 1024),
+            ("grpc.keepalive_time_ms", 10000),
+            ("grpc.keepalive_timeout_ms", 5000),
+            ("grpc.keepalive_permit_without_calls", 1),
+            ("grpc.http2.max_pings_without_data", 0),
+            ("grpc.initial_reconnect_backoff_ms", 50),
+            ("grpc.max_reconnect_backoff_ms", 5000),
         ]
+        self._connected = False
         self.channel = grpc.insecure_channel(server_address, options=options)
+        self.channel.subscribe(self._on_channel_state_change, try_to_connect=True)
         self.stub = terminal_pb2_grpc.TerminalServiceStub(self.channel)
+
+    def _on_channel_state_change(self, connectivity: grpc.ChannelConnectivity):
+        self._connected = (connectivity == grpc.ChannelConnectivity.READY)
+        logger.info(f"gRPC Channel connectivity changed to: {connectivity.name} (ready={self._connected})")
+
+    @property
+    def is_connected(self) -> bool:
+        return self._connected
 
     def _get_metadata(self):
         if self.api_key:
@@ -124,6 +145,20 @@ class TerminalGRPCClient:
             return symbols
         except Exception as e:
             logger.error(f"Failed to get symbols: {e}")
+            raise
+
+    def get_terminal_logs(self, lines: int = 100, date: str | None = None):
+        try:
+            req = terminal_pb2.TerminalLogsRequest(lines=lines, date=date or "")
+            res = self.stub.GetTerminalLogs(req, metadata=self._get_metadata(), timeout=10)
+            return {
+                "file": res.file,
+                "total_lines": res.total_lines,
+                "returned_lines": res.returned_lines,
+                "logs": list(res.content),
+            }
+        except Exception as e:
+            logger.error(f"Failed to fetch terminal logs over gRPC: {e}")
             raise
 
     def close(self):

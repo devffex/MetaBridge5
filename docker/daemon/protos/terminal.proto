@@ -256,6 +256,7 @@ message TerminalStatusResponse {
 
 message TerminalLogsRequest {
   int32 lines = 1;
+  string date = 2;
 }
 
 message TerminalLogsResponse {
