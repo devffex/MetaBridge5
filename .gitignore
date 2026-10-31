@@ -14,3 +14,4 @@ __pycache__/
 *.tar.gz
 live_api_verification_results.json
 .zed/
+data/

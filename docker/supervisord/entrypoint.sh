@@ -17,6 +17,7 @@ APP_DIR="/opt/metabridge5"
 # Populate fresh volumes from the pre-baked template
 if [ ! -f "${WINE_PREFIX}/system.reg" ]; then
     echo "[entrypoint] Uninitialized volume detected. Seeding prefix from ${SEED_DIR}..."
+    mkdir -p "${WINE_PREFIX}"
     cp -a "${SEED_DIR}/." "${WINE_PREFIX}/"
     echo "[entrypoint] Seed deployment completed in sub-second time."
 elif [ ! -d "${WINE_PREFIX}/drive_c/mt5-data" ]; then

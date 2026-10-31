@@ -14,8 +14,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-import pyarrow as pa
-import pyarrow.parquet as pq
+import arro3.io as aio
 
 from app.pipeline.parquet_exporter import rates_to_dataframe
 from app.storage.base import StorageBackend
@@ -83,9 +82,9 @@ class StreamParquetSink:
         chunk_path = self._temp_dir / f"chunk_{chunk_idx:04d}.parquet"
 
         df = rates_to_dataframe(self._buffer)
-        table = pa.Table.from_pandas(df, preserve_index=False)
+        table = df.to_arrow_table()
 
-        pq.write_table(table, chunk_path, compression="snappy")
+        aio.write_parquet(table, chunk_path, compression="snappy")
         self._chunk_paths.append(chunk_path)
         self._chunks_flushed += 1
         self._buffer.clear()

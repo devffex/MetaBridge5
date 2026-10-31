@@ -1,7 +1,7 @@
 import asyncio
-from datetime import datetime, timedelta, timezone
 import logging
 import os
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from cachetools import TTLCache
@@ -450,7 +450,7 @@ async def trigger_backfill(
     resolved_date_from = payload.date_from
     resolved_date_to = payload.date_to
     if payload.days and payload.days > 0:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         resolved_date_to = payload.date_to or now.strftime("%Y-%m-%dT%H:%M:%SZ")
         resolved_date_from = (now - timedelta(days=payload.days)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -758,7 +758,7 @@ async def add_active_symbol(
             resolved_date_from = None
             resolved_date_to = None
             if payload.days and payload.days > 0:
-                now = datetime.now(timezone.utc)
+                now = datetime.now(UTC)
                 resolved_date_to = now.strftime("%Y-%m-%dT%H:%M:%SZ")
                 resolved_date_from = (now - timedelta(days=payload.days)).strftime("%Y-%m-%dT%H:%M:%SZ")
 

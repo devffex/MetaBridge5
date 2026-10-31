@@ -70,3 +70,21 @@ def test_merge_rates_with_parquet():
     assert len(merged_df) == 2
     assert merged_df.iloc[0]["time"] == 1700000000
     assert merged_df.iloc[1]["time"] == 1700000060
+
+
+def test_empty_rates():
+    df = rates_to_dataframe([])
+    assert len(df) == 0
+    assert df.columns == ["time", "open", "high", "low", "close", "tick_volume"]
+    assert df.to_compact_json_bytes() == b"[]"
+
+
+def test_corrupt_parquet_merge_fallback():
+    new_rates = [
+        {"time": 1700000000, "open": 1.08, "high": 1.09, "low": 1.07, "close": 1.085, "tick_volume": 50}
+    ]
+    # Passing garbage bytes shouldn't crash; it safely falls back to new_rates
+    merged = merge_rates_with_parquet(b"corrupt-data", new_rates)
+    assert len(merged) == 1
+    assert merged.iloc[0]["time"] == 1700000000
+

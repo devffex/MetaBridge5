@@ -63,11 +63,60 @@ RUN apk add --no-cache git && \
 
 
 # ==========================================
-# STAGE 4: Final Runtime Base Image
+# STAGE 4: MT5 Application Assembler (Zero-Copy Layer)
 # ==========================================
-FROM alpine:3.20
+FROM alpine:3.20 AS mt5-assembler
 
-# Combine apk packages to reduce layer overhead (Removed curl, unzip, supervisor, python3)
+RUN mkdir -p /opt/metabridge5/daemon \
+             /opt/metabridge5/python \
+             /opt/metabridge5/MetaTrader5 \
+             /tmp/mt5-data
+
+# Copy helper scripts
+COPY docker/supervisord/startup_guard.sh /opt/metabridge5/startup_guard.sh
+COPY docker/supervisord/vnc_passwd_setup.sh /opt/metabridge5/vnc_passwd_setup.sh
+COPY docker/supervisord/xvfb_launcher.sh /opt/metabridge5/xvfb_launcher.sh
+COPY docker/supervisord/vnc_launcher.sh /opt/metabridge5/vnc_launcher.sh
+COPY docker/supervisord/terminal_wrapper.sh /opt/metabridge5/terminal_wrapper.sh
+COPY docker/supervisord/entrypoint.sh /opt/metabridge5/entrypoint.sh
+COPY docker/daemon/grpc_server.py /opt/metabridge5/daemon/grpc_server.py
+
+# Copy MetaTrader 5 portable binaries
+COPY MetaTrader5/ /opt/metabridge5/MetaTrader5/
+
+# Copy Windows Python runtime and generated stubs
+COPY --from=python-builder /tmp/python/ /opt/metabridge5/python/
+COPY --from=python-builder /tmp/daemon/terminal_pb2*.py /opt/metabridge5/daemon/
+
+# Move mutable MT5 folders to staging and link to persistent path
+RUN rm -f /opt/metabridge5/MetaTrader5/Config/terminal.lic \
+          /opt/metabridge5/MetaTrader5/Config/accounts.dat && \
+    for d in Config Bases MQL5 Profiles logs Tester; do \
+        if [ -d /opt/metabridge5/MetaTrader5/$d ]; then \
+            mv /opt/metabridge5/MetaTrader5/$d /tmp/mt5-data/$d; \
+        else \
+            mkdir -p /tmp/mt5-data/$d; \
+        fi && \
+        ln -sfn /home/wine/.wine/drive_c/mt5-data/$d /opt/metabridge5/MetaTrader5/$d; \
+    done && \
+    # Disable LiveUpdate in the binary directory
+    rm -rf /opt/metabridge5/MetaTrader5/liveupdate && \
+    touch /opt/metabridge5/MetaTrader5/liveupdate && \
+    chmod 444 /opt/metabridge5/MetaTrader5/liveupdate && \
+    # Set final script execution permissions and immutable root read-only ownership
+    chmod +x /opt/metabridge5/*.sh && \
+    chown -R root:root /opt/metabridge5 && \
+    chmod -R a-w /opt/metabridge5 && \
+    chmod -R a+rX /opt/metabridge5
+
+
+
+# ==========================================
+# STAGE 5: Runtime Preparer (Builds Complete Rootfs)
+# ==========================================
+FROM alpine:3.20 AS runtime-preparer
+
+# 1. Install packages
 RUN apk add --no-cache \
     bash \
     xvfb \
@@ -81,119 +130,109 @@ RUN apk add --no-cache \
     xdotool \
     libfaketime \
     tini \
-    su-exec && \
-    rm -rf /usr/lib/wine/i386-windows
+    su-exec
 
-# Copy the compiled Go supervisord binary
+# 2. Copy Go supervisord binary and supervisorctl symlink
 COPY --from=supervisor-builder /go/bin/supervisord /usr/bin/supervisord
+RUN ln -sf /usr/bin/supervisord /usr/bin/supervisorctl
 
-# Set up user and environment variables for Wine
-ENV WINEPREFIX=/home/wine/.wine
-ENV WINEARCH=win64
-ENV DISPLAY=:1
-ENV WINEDLLOVERRIDES="mscoree,mshtml,winemenubuilder.exe=disabled"
-# Prevent Python from writing bytecode at runtime
-ENV PYTHONDONTWRITEBYTECODE=1
-# Globally silence verbose Wine logging
-ENV WINEDEBUG=-all
-# Default credentials for development (can be overridden via docker run -e)
-ENV VNC_PASSWORD=metabridge5pass
-ENV METABRIDGE5_API_KEY=dev_metabridge5_secret_key_123
-
-# Create wine user and workspaces
-RUN adduser -D -u 1000 wine && \
-    mkdir -p /home/wine/.wine /opt/metabridge5 /opt/wine-seed && \
-    chown -R wine:wine /home/wine /opt/metabridge5 /opt/wine-seed
-
-# Copy the compiled Microsoft fonts from Stage 1
+# 3. Copy fonts and rebuild font cache
 COPY --from=font-builder /usr/share/fonts/truetype/msttcorefonts/ /usr/share/fonts/truetype/msttcorefonts/
-
-# Rebuild font cache
 RUN fc-cache -f
 
-# Copy supervisord configuration and helper scripts
-COPY docker/supervisord.conf /etc/supervisord.conf
-COPY --chown=wine:wine docker/supervisord/startup_guard.sh /opt/metabridge5/startup_guard.sh
-COPY --chown=wine:wine docker/supervisord/vnc_passwd_setup.sh /opt/metabridge5/vnc_passwd_setup.sh
-COPY --chown=wine:wine docker/supervisord/xvfb_launcher.sh /opt/metabridge5/xvfb_launcher.sh
-COPY --chown=wine:wine docker/supervisord/vnc_launcher.sh /opt/metabridge5/vnc_launcher.sh
-COPY --chown=wine:wine docker/supervisord/terminal_wrapper.sh /opt/metabridge5/terminal_wrapper.sh
-COPY --chown=wine:wine docker/supervisord/entrypoint.sh /opt/metabridge5/entrypoint.sh
-COPY --chown=wine:wine docker/daemon/grpc_server.py /opt/metabridge5/daemon/grpc_server.py
-RUN chmod +x /opt/metabridge5/startup_guard.sh /opt/metabridge5/vnc_passwd_setup.sh /opt/metabridge5/xvfb_launcher.sh /opt/metabridge5/vnc_launcher.sh /opt/metabridge5/terminal_wrapper.sh /opt/metabridge5/entrypoint.sh
-
-# Copy portable MetaTrader 5 from host (redundant binaries are filtered by .dockerignore)
-COPY --chown=wine:wine MetaTrader5/ /opt/metabridge5/MetaTrader5/
-
-# Configure system timezone name for Wine's timezone auto-detection
+# 4. Setup timezone
 RUN echo "UTC" > /etc/timezone
 
-# Clean up any pre-baked host-specific terminal license and account cache
-RUN rm -f /opt/metabridge5/MetaTrader5/Config/terminal.lic \
-          /opt/metabridge5/MetaTrader5/Config/accounts.dat
+# 5. Create wine user and workspace dirs
+RUN adduser -D -u 1000 wine && \
+    mkdir -p /home/wine /opt/wine-seed && \
+    chown -R wine:wine /home/wine /opt/wine-seed
 
-# Move mutable MT5 folders into staging for prefix volume and link to persistent path
-RUN mkdir -p /tmp/mt5-data && \
-    for d in Config Bases MQL5 Profiles logs Tester; do \
-        if [ -d /opt/metabridge5/MetaTrader5/$d ]; then \
-            mv /opt/metabridge5/MetaTrader5/$d /tmp/mt5-data/$d; \
-        else \
-            mkdir -p /tmp/mt5-data/$d; \
-        fi && \
-        ln -sfn /home/wine/.wine/drive_c/mt5-data/$d /opt/metabridge5/MetaTrader5/$d; \
-    done
+# 6. Copy supervisord configuration
+COPY docker/supervisord.conf /etc/supervisord.conf
 
-# Create the VNC password directory, set permissions, and pre-bake default passwords
+# 7. Setup VNC credentials directory
 RUN mkdir -p /home/wine/.vnc && \
     printf "metabridge5pass\nMetabridge5Pass\nMetaBridge5Pass\n" > /home/wine/.vnc/passwdfile && \
     x11vnc -storepasswd metabridge5pass /home/wine/.vnc/passwd && \
     chmod 600 /home/wine/.vnc/passwdfile /home/wine/.vnc/passwd && \
     chown -R wine:wine /home/wine/.vnc
 
-# Copy Python runtime base and generated stubs (from python-builder)
-COPY --chown=wine:wine --from=python-builder /tmp/python/ /opt/metabridge5/python/
-COPY --chown=wine:wine --from=python-builder /tmp/daemon/terminal_pb2*.py /opt/metabridge5/daemon/
+# 8. Copy immutable application tree and staging mt5-data with final permissions
+COPY --from=mt5-assembler /opt/metabridge5 /opt/metabridge5
+COPY --from=mt5-assembler /tmp/mt5-data /tmp/mt5-data
+COPY --chown=wine:wine docker/import_certs.py /tmp/import_certs.py
 
-# Copy certificate importer script
-COPY --chown=wine:wine docker/import_certs.py /opt/metabridge5/import_certs.py
+# 9. Initialize Wine seed prefix, import certs, deduplicate system32 DLLs via Proton-style symlinks, and prune
+ENV WINEPREFIX=/opt/wine-seed
+ENV WINEARCH=win64
+ENV DISPLAY=:1
+ENV WINEDLLOVERRIDES="mscoree,mshtml=d;winemenubuilder.exe=d"
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV WINEDEBUG=-all
+ENV VNC_PASSWORD=metabridge5pass
+ENV METABRIDGE5_API_KEY=dev_metabridge5_secret_key_123
 
-# Single command layer: Run Wine initialization, registry setup, and cert import as wine user, then seed
-RUN mkdir -p /home/wine/.wine/dosdevices /home/wine/.wine/drive_c/mt5-data && \
-    cp -a /tmp/mt5-data/. /home/wine/.wine/drive_c/mt5-data/ && \
+RUN mkdir -p /opt/wine-seed && \
+    chown -R wine:wine /opt/wine-seed && \
+    su-exec wine wineboot --init && \
+    ln -sfn /opt/metabridge5 /opt/wine-seed/dosdevices/m: && \
+    mkdir -p /opt/wine-seed/drive_c/mt5-data && \
+    cp -a /tmp/mt5-data/. /opt/wine-seed/drive_c/mt5-data/ && \
     rm -rf /tmp/mt5-data && \
-    ln -sfn /opt/metabridge5 /home/wine/.wine/dosdevices/m: && \
-    su -s /bin/bash wine -c 'wineboot --init && \
-        wine reg add "HKLM\\Software\\Microsoft\\Cryptography\\Defaults\\Provider Types\\Type 024" /v Name /t REG_SZ /d "Microsoft Enhanced RSA and AES Cryptographic Provider" /f && \
+    cp /tmp/import_certs.py /opt/wine-seed/drive_c/import_certs.py && \
+    cp /etc/ssl/certs/ca-certificates.crt /opt/wine-seed/drive_c/ca-certificates.crt && \
+    rm -f /tmp/import_certs.py && \
+    chown -R wine:wine /opt/wine-seed && \
+    su-exec wine bash -c 'wine reg add "HKLM\\Software\\Microsoft\\Cryptography\\Defaults\\Provider Types\\Type 024" /v Name /t REG_SZ /d "Microsoft Enhanced RSA and AES Cryptographic Provider" /f && \
         wine reg add "HKLM\\Software\\Microsoft\\Cryptography\\Defaults\\Provider Types\\Type 024" /v TypeName /t REG_SZ /d "RSA Full and AES" /f && \
         wine reg add "HKLM\\Software\\Microsoft\\Cryptography\\Defaults\\Provider\\Microsoft Enhanced RSA and AES Cryptographic Provider" /v "Image Path" /t REG_SZ /d "rsaenh.dll" /f && \
         wine reg add "HKLM\\Software\\Microsoft\\Cryptography\\Defaults\\Provider\\Microsoft Enhanced RSA and AES Cryptographic Provider" /v Type /t REG_DWORD /d 24 /f && \
         wine reg add "HKLM\\Software\\Microsoft\\Cryptography\\Defaults\\Provider\\Microsoft Enhanced RSA and AES Cryptographic Provider" /v SigInFile /t REG_DWORD /d 0 /f && \
-        wine M:\\python\\python.exe M:\\import_certs.py && \
+        wine M:\\python\\python.exe C:\\import_certs.py && \
         wineserver -w' && \
-    # 2. Reclaim ownership and delete cert script (now back as root)
-    rm -f /opt/metabridge5/import_certs.py && \
-    # Remove pycache recursively
-    find /opt/metabridge5/python -type d -name "__pycache__" -exec rm -rf {} + && \
+    rm -f /opt/wine-seed/drive_c/import_certs.py /opt/wine-seed/drive_c/ca-certificates.crt && \
+    # Remove syswow64 (32-bit prefix directory) and 32-bit Wine PE files
+    rm -rf /opt/wine-seed/drive_c/windows/syswow64 /usr/lib/wine/i386-windows && \
+    # Remove unused Wine modules and apk libraries
+    rm -rf /usr/lib/gstreamer* /usr/lib/libgphoto2* /usr/lib/pulseaudio* && \
+    cd /usr/lib/wine/x86_64-windows && \
+    rm -f d3dx9_* d3dx10_* d3dx11_* d3dcompiler_* xaudio2_* x3daudio* xapofx* xinput* dinput* winegstreamer* light.msstyles && \
+    rm -f notepad.exe wordpad.exe winemine.exe iexplore.exe wmplayer.exe && \
+    # Deduplicate system32 DLLs using Proton-style symlinks
+    cd /opt/wine-seed/drive_c/windows/system32 && \
+    for f in *; do \
+        target="/usr/lib/wine/x86_64-windows/$f"; \
+        if [ -f "$target" ] && cmp -s "$f" "$target"; then \
+            ln -sf "$target" "$f"; \
+        fi; \
+    done && \
     # Remove intermediate wineserver build-time socket files
-    rm -rf /tmp/.wine-1000 && \
+    rm -rf /tmp/.wine-1000 /tmp/* /var/cache/apk/* && \
     # Insulate prefix by deleting container root traversal symlink
-    rm -f /home/wine/.wine/dosdevices/z: && \
-    # Disable LiveUpdate by blocking its directory in both the installation path and AppData
-    rm -rf /opt/metabridge5/MetaTrader5/liveupdate && \
-    touch /opt/metabridge5/MetaTrader5/liveupdate && \
-    chmod 444 /opt/metabridge5/MetaTrader5/liveupdate && \
-    mkdir -p /home/wine/.wine/drive_c/users/wine/AppData/Roaming/MetaQuotes/Terminal/BF9336D047DCCACD9080FDBCE04D3DE5 && \
-    rm -rf /home/wine/.wine/drive_c/users/wine/AppData/Roaming/MetaQuotes/Terminal/BF9336D047DCCACD9080FDBCE04D3DE5/liveupdate && \
-    touch /home/wine/.wine/drive_c/users/wine/AppData/Roaming/MetaQuotes/Terminal/BF9336D047DCCACD9080FDBCE04D3DE5/liveupdate && \
-    chmod 444 /home/wine/.wine/drive_c/users/wine/AppData/Roaming/MetaQuotes/Terminal/BF9336D047DCCACD9080FDBCE04D3DE5/liveupdate && \
-    # Seed the initialized Wine prefix template
-    cp -a /home/wine/.wine/. /opt/wine-seed/ && \
-    chown -R wine:wine /opt/wine-seed /home/wine && \
-    # Isolate immutable application binaries
-    chown -R root:root /opt/metabridge5 && \
-    chmod -R a-w /opt/metabridge5 && \
-    chmod -R a+rX /opt/metabridge5
+    rm -f /opt/wine-seed/dosdevices/z: && \
+    # Disable LiveUpdate in prefix template AppData
+    mkdir -p /opt/wine-seed/drive_c/users/wine/AppData/Roaming/MetaQuotes/Terminal/BF9336D047DCCACD9080FDBCE04D3DE5 && \
+    touch /opt/wine-seed/drive_c/users/wine/AppData/Roaming/MetaQuotes/Terminal/BF9336D047DCCACD9080FDBCE04D3DE5/liveupdate && \
+    chmod 444 /opt/wine-seed/drive_c/users/wine/AppData/Roaming/MetaQuotes/Terminal/BF9336D047DCCACD9080FDBCE04D3DE5/liveupdate && \
+    chown -R wine:wine /opt/wine-seed
 
+
+# ==========================================
+# STAGE 6: Final Runtime Base Image (Single Squashed Clean Rootfs)
+# ==========================================
+FROM scratch
+
+COPY --from=runtime-preparer / /
+
+ENV WINEPREFIX=/home/wine/.wine
+ENV WINEARCH=win64
+ENV DISPLAY=:1
+ENV WINEDLLOVERRIDES="mscoree,mshtml=d;winemenubuilder.exe=d"
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV WINEDEBUG=-all
+ENV VNC_PASSWORD=metabridge5pass
+ENV METABRIDGE5_API_KEY=dev_metabridge5_secret_key_123
 
 WORKDIR /home/wine
 
