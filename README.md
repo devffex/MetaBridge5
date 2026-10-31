@@ -62,10 +62,10 @@ Detailed architectural pillars, build instructions, and operational runbooks liv
 
 | Container Image | Primary Role | Host Ports | Documentation |
 |---|---|---|---|
-| `metabridge5-core` | Headless Wine runtime, MetaTrader 5 terminal, and internal gRPC daemon | `127.0.0.1:5900` (VNC loopback) | [docker/README.md](file:///home/julio/work/devffex/MetaBridge5/docker/README.md) |
-| `metabridge5-market-gateway` | FastAPI web server, WebSocket quote hub, Candle 0 manager, and Parquet backfill | `8000:8000` | [apps/market-gateway/README.md](file:///home/julio/work/devffex/MetaBridge5/apps/market-gateway/README.md) |
-| `metabridge5-duckdb-analytics` | Read-only embedded DuckDB engine executing vectorized SQL queries across Parquet files | `8005:8005` | [apps/duckdb-analytics/README.md](file:///home/julio/work/devffex/MetaBridge5/apps/duckdb-analytics/README.md) |
-| `metabridge5-backup-sync` | Scheduled volume snapshotting, SHA-256 integrity verification, and cloud synchronization | None | [apps/backup-sync/README.md](file:///home/julio/work/devffex/MetaBridge5/apps/backup-sync/README.md) |
+| `metabridge5-core` | Headless Wine runtime, MetaTrader 5 terminal, and internal gRPC daemon | `127.0.0.1:5900` (VNC loopback) | [docker/README.md](docker/README.md) |
+| `metabridge5-market-gateway` | FastAPI web server, WebSocket quote hub, Candle 0 manager, and Parquet backfill | `8000:8000` | [apps/market-gateway/README.md](apps/market-gateway/README.md) |
+| `metabridge5-duckdb-analytics` | Read-only embedded DuckDB engine executing vectorized SQL queries across Parquet files | `8005:8005` | [apps/duckdb-analytics/README.md](apps/duckdb-analytics/README.md) |
+| `metabridge5-backup-sync` | Scheduled volume snapshotting, SHA-256 integrity verification, and cloud synchronization | None | [apps/backup-sync/README.md](apps/backup-sync/README.md) |
 
 ---
 
@@ -155,7 +155,7 @@ flowchart TD
 
 ## 5. Verified Container Image Size Budgets
 
-The build pipeline enforces strict size budgets on all container images using [scripts/check_image_sizes.sh](file:///home/julio/work/devffex/MetaBridge5/scripts/check_image_sizes.sh):
+The build pipeline enforces strict size budgets on all container images using [scripts/check_image_sizes.sh](scripts/check_image_sizes.sh):
 
 | Container Image | Budget Ceiling | Certified Local Size | Safety Margin | Verification Status |
 |---|---|---|---|---|
