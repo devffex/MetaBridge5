@@ -1,285 +1,229 @@
-# MetaBridge5 Market Gateway
+# MetaBridge5 Market Gateway (`metabridge5-market-gateway`)
 
-The **MetaBridge5 Market Gateway** is an autonomous, containerized financial data collection, real-time in-flight **Candle 0** engine, and historical dataset pipeline designed for MetaTrader 5 broker terminals.
-
-It runs inside a containerized Wine runtime alongside a high-throughput FastAPI/WebSocket server and automated pipeline workers managed by supervisord.
-
----
-
-## 1. System Architecture
+The `metabridge5-market-gateway` container provides the real-time financial API for MetaBridge5.
+It runs on native Alpine Linux 3.20 without emulation layers or Windows binaries.
+It connects to `metabridge5-core` over internal gRPC to collect ticks and fetch historical bars.
+It exposes public REST endpoints and WebSocket channels on port 8000.
+It also computes in-flight Candle 0 states in memory and writes partitioned Apache Parquet datasets to `/data`.
 
 ```mermaid
 flowchart TD
-    subgraph Broker ["Broker Infrastructure"]
-        TradeServer[("Broker Trade Server")]
+    subgraph Gateway ["metabridge5-market-gateway Container (:8000)"]
+        FastAPI["FastAPI Web Server"]
+        ClientRPC["Resilient gRPC Client"]
+        Candle0["Candle 0 Rolling Aggregator"]
+        Worker["Backfill Ingestion Worker"]
+        StaticRoute["Static Parquet Server (/static)"]
+        Audit["SQLite WAL Audit Logger"]
+
+        FastAPI --> Candle0
+        FastAPI --> Worker
+        FastAPI --> StaticRoute
+        Worker --> Audit
     end
 
-    subgraph ContainerNode ["MetaBridge5 Market Gateway (Docker Container)"]
-        subgraph VirtualizationLayer ["Wine Virtualization & MT5 Daemon"]
-            MT5Terminal["MetaTrader 5 Terminal (terminal64.exe)"]
-            SafeLock["SafeMT5Lock (Mutual Exclusion Mutex)"]
-            GRPCDaemon["MT5 Python gRPC Daemon (port 50051)"]
-            XvfbDisplay["Xvfb Display :1 & x11vnc (port 5900)"]
-        end
+    Core["metabridge5-core (:50051)"] <-->|"gRPC Stream (Ticks & Bars)"| ClientRPC
+    ClientRPC --> Candle0
+    ClientRPC --> Worker
+    Worker -->|"Write Atomic Parquet"| DataVol[("market_data Volume\n(/data/parquet)")]
+    StaticRoute <--> DataVol
 
-        subgraph GatewayLayer ["Market Gateway Service (port 8000)"]
-            FastAPIServer["FastAPI Gateway & Auth Guard (X-API-Key)"]
-            GRPCClient["TerminalGRPCClient (Channel Pooling, 64MB Limit)"]
-            Candle0Engine["Candle0Manager (In-Flight Bar Aggregator)"]
-            PipelineWorker["BackfillWorker (Chunked Sync Pipeline)"]
-            ParquetExporter["Parquet & Compact JSON Exporter"]
-            StorageFactory["StorageFactory (Strategy Pattern)"]
-            AuditFactory["AuditLoggerFactory (Factory Pattern)"]
-            WebSocketHub["WebSocket Connection Hub"]
-        end
-
-        subgraph LocalTelemetry ["Local Audit & Telemetry"]
-            SQLiteWAL[("SQLite WAL DB (/tmp/metabridge5_traces.sqlite3)")]
-        end
-    end
-
-    subgraph StorageLayer ["Global Storage & Multi-CDN Layer"]
-        GitHubSink["GitHub Repo Sink (devffex/dataset)"]
-        PurgeAPI["jsDelivr Instant Purge API"]
-        JSDelivrCDN["jsDelivr Multi-CDN (Cloudflare + Fastly Edge)"]
-        S3Storage[("Cloudflare R2 / AWS S3")]
-    end
-
-    subgraph Consumers ["Client Ecosystem"]
-        ReactCharts["TradingView / Lightweight Charts (React/TS)"]
-        TradingBots["Autonomous Python Trading Bots"]
-        MLPipelines["DuckDB / Polars ML Pipelines"]
-    end
-
-    %% Internal Data Flow
-    TradeServer <-->|"Live Ticks & Bar History"| MT5Terminal
-    MT5Terminal <--> SafeLock
-    SafeLock <--> GRPCDaemon
-    GRPCDaemon <-->|"gRPC IPC (Port 50051)"| GRPCClient
-
-    GRPCClient -->|"Poll Ticks (200ms)"| Candle0Engine
-    Candle0Engine -->|"Broadcast In-Flight OHLCV"| WebSocketHub
-    Candle0Engine -->|"On Period Rollover (M1..MN1)"| PipelineWorker
-
-    GRPCClient -->|"Fetch Batch Chunks (25k Bars)"| PipelineWorker
-    PipelineWorker --> ParquetExporter
-    ParquetExporter --> StorageFactory
-
-    StorageFactory -->|"Git Commit"| GitHubSink
-    StorageFactory -->|"Direct S3 Upload"| S3Storage
-    GitHubSink -->|"Trigger Edge Purge"| PurgeAPI
-    PurgeAPI --> JSDelivrCDN
-    GitHubSink --> JSDelivrCDN
-
-    PipelineWorker -->|"Audit Event"| AuditFactory
-    AuditFactory -->|"Microsecond Write"| SQLiteWAL
-
-    FastAPIServer --> WebSocketHub
-    FastAPIServer --> Candle0Engine
-    FastAPIServer --> PipelineWorker
-
-    %% Client Consumption Patterns
-    JSDelivrCDN -->|"1. Fast Warmup (recent.json / history.parquet)"| ReactCharts
-    WebSocketHub -->|"2. Sub-second Candle 0 Updates (WS)"| ReactCharts
-
-    JSDelivrCDN -->|"1. Indicator Warmup (EMA, RSI, ATR)"| TradingBots
-    WebSocketHub -->|"2. Live Market Ticks & Signals"| TradingBots
-
-    JSDelivrCDN -->|"Scan & Query Parquet Partitions"| MLPipelines
-```
-
-👉 **Full Architecture Deep Dive**: [Architecture & System Design Manual](docs/architecture.md)
-
----
-
-## 2. Configuration & Environment (`.env`)
-
-Configure your environment inside `apps/market-gateway/.env` (no production secrets in version control):
-
-```ini
-# ==============================================================================
-# MetaBridge5 Market Gateway Configuration (.env)
-# ==============================================================================
-
-# 1. API Security & VNC Password
-METABRIDGE5_API_KEY=your_secret_api_key_here
-VNC_PASSWORD=your_vnc_password_here
-
-# 2. MT5 gRPC Daemon Connection
-MT5_GRPC_SERVER=127.0.0.1:50051
-
-# 3. Storage Backend Strategy ('github' | 's3' | 'local')
-STORAGE_BACKEND=github
-
-# 4. GitHub & jsDelivr Multi-CDN Configuration (Used when STORAGE_BACKEND=github)
-GITHUB_TOKEN=ghp_yourPersonalAccessTokenHere
-GITHUB_REPO=your_organization/your_dataset_repo
-GITHUB_BRANCH=main
-GITHUB_CDN_BASE_URL=https://cdn.jsdelivr.net/gh/your_organization/your_dataset_repo@main
-
-# 5. S3 / Cloudflare R2 Configuration (Used when STORAGE_BACKEND=s3)
-S3_BUCKET_NAME=your-market-data-bucket
-S3_ENDPOINT_URL=https://<account_id>.r2.cloudflarestorage.com
-S3_ACCESS_KEY_ID=your_s3_access_key_id
-S3_SECRET_ACCESS_KEY=your_s3_secret_access_key
-S3_REGION_NAME=auto
-S3_CDN_BASE_URL=https://data.yourdomain.com
-
-# 6. Audit & Telemetry Configuration ('sqlite' | 'external' | 'both' | 'none')
-AUDIT_LOG_SINK=sqlite
-AUDIT_SQLITE_PATH=/tmp/metabridge5_traces.sqlite3
-AUDIT_EXTERNAL_URL=http://telemetry.internal/api/v1/traces
-
-# 7. Mock Mode (1 = Enable offline synthetic data without MT5 terminal)
-METAFORGE_MOCK_MT5=0
-
-# 8. Runtime Diagnostics
-TZ=UTC
-WINEDEBUG=-all
+    WebClients["Web Dashboards / Bots"] <-->|"REST & WebSockets (:8000)"| FastAPI
+    Prometheus["Prometheus Monitor"] -->|"Scrape /metrics"| FastAPI
 ```
 
 ---
 
-## 3. Running & Operations
+## 1. Decoupled Alpine Virtualenv Compilation and Size Optimization
 
-### Recommended: Docker Named Volume Persistence
+Previous versions bundled the web gateway inside the Wine image.
+That setup forced simple web services to inherit heavy Windows dependencies.
+The gateway now builds as an independent container on native Alpine Linux.
+A multi-stage build uses `uv` to compile dependencies into a standalone virtual environment.
 
-To preserve your broker login across container updates without re-entering passwords:
-
-```bash
-# 1. Create a persistent named volume
-docker volume create metabridge5_mt5_data
-
-# 2. Build local images from monorepo root
-make build-base
-make build-market-node
-
-# 3. Launch container with volume attached (foreground live logs)
-docker run -it --rm --name metabridge5-market-node \
-  -p 8000:8000 \
-  -p 5900:5900 \
-  -v metabridge5_wine_data:/home/wine/.wine \
-  -e METABRIDGE5_API_KEY="your_secret_api_key_here" \
-  -e VNC_PASSWORD="your_vnc_password_here" \
-  -e STORAGE_BACKEND="github" \
-  -e GITHUB_TOKEN="ghp_yourPersonalAccessTokenHere" \
-  -e GITHUB_REPO="your_organization/your_dataset_repo" \
-  -e GITHUB_BRANCH="main" \
-  -e AUDIT_LOG_SINK="sqlite" \
-  metabridge5-market-node:latest
+```mermaid
+flowchart TD
+    Config["pyproject.toml & uv.lock"] --> UVStage["Alpine Builder Stage (uv:0.4.30)"]
+    UVStage --> Sync["Install Dependencies into /opt/gateway-venv"]
+    Sync --> VEnv["Compiled Virtual Environment"]
+    VEnv -->|"COPY --from=builder"| FinalRuntime["Runtime Stage (alpine:3.20)"]
+    FinalRuntime --> Prune["Remove Unused Python Stdlib Packages"]
+    Prune --> GatewayImg["Final Gateway Image (111.7 MB)"]
 ```
 
-👉 **Authentication & Session Persistence Guide**: [Docker Named Volume Authentication Manual](docs/authentication_persistence.md)
+The runtime stage strips unneeded Python standard library packages before finalizing the container.
+Removing packages like `ensurepip`, `pydoc_data`, and test suites saves 15 megabytes.
+The final container weighs only 111.7 megabytes, well under the 125 megabyte budget.
+
+```dockerfile
+FROM ghcr.io/astral-sh/uv:0.4.30-alpine3.20 AS builder
+
+WORKDIR /build
+COPY pyproject.toml uv.lock ./
+RUN uv venv /opt/gateway-venv && \
+    uv sync --frozen --no-dev --no-install-project
+
+FROM alpine:3.20
+RUN apk add --no-cache python3 tini
+COPY --from=builder /opt/gateway-venv /opt/gateway-venv
+RUN rm -rf /usr/lib/python3.12/ensurepip /usr/lib/python3.12/idlelib /usr/lib/python3.12/test
+```
 
 ---
 
-### One-Time Broker Authentication via TigerVNC
+## 2. Resilient Loopback gRPC Transport and Network Failure Recovery
 
-1. Connect to the virtual desktop:
-   ```bash
-   vncviewer localhost:5900
-   ```
-2. Enter the VNC password (`your_vnc_password_here`).
-3. In MetaTrader 5, go to `File -> Login to Trade Account`.
-4. Enter your Broker **Login**, **Password**, and select your broker **Server**.
-5. Check **Save password** and click **OK**.
-6. Confirm green/blue signal bars in the bottom right corner.
-7. **Close TigerVNC**: All further data operations are 100% automated by the API.
+Running services in separate network namespaces requires reliable network recovery.
+The gateway client connects to the core terminal using proactive keepalive pings.
+If the core container restarts during maintenance, the gateway holds client WebSocket connections open.
+It reconnects to the upstream terminal with an exponential backoff starting at 50 milliseconds.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Client as Charting Client / Trading Bot
+    participant Gateway as Market Gateway (:8000)
+    participant Core as Core Terminal (:50051)
+
+    Client->>Gateway: Connect WebSocket Stream (/api/v1/market/ws/EURUSD)
+    Gateway->>Core: Request Symbol Ticks Stream
+    Core-->>Gateway: Deliver Live Tick Stream
+    Gateway-->>Client: Broadcast Candle 0 Updates
+    Note over Core: Core Container Restarts or Reconnects Broker
+    Core-xGateway: gRPC Connection Drops
+    Gateway->>Gateway: Mark Channel Stale & Hold WebSocket Connection
+    Gateway->>Core: Reconnect with Exponential Backoff (50ms to 5000ms)
+    Core-->>Gateway: Upstream Channel Ready
+    Gateway->>Core: Resume Symbol Ticks Stream
+    Gateway-->>Client: Resume Live Tick Updates
+```
+
+The client marks cached quotes as stale while the upstream link recovers.
+Once the channel transitions to the ready state, the gateway requests fresh quotes immediately.
+This prevents delivery of corrupted market data without dropping downstream clients.
+
+```python
+class TerminalGRPCClient:
+    def __init__(self):
+        host = os.environ.get("TERMINAL_GRPC_HOST", "core")
+        port = os.environ.get("TERMINAL_GRPC_PORT", "50051")
+        options = [
+            ("grpc.keepalive_time_ms", 10000),
+            ("grpc.keepalive_timeout_ms", 5000),
+            ("grpc.initial_reconnect_backoff_ms", 50),
+            ("grpc.max_reconnect_backoff_ms", 5000),
+        ]
+        self.channel = grpc.insecure_channel(f"{host}:{port}", options=options)
+```
 
 ---
 
-## 4. Container Health, Observability & Ingestion Controls
+## 3. In-Memory Candle 0 Aggregation and Vectorized Parquet Export
 
-### System Probes & Diagnostics
-| Probe / Diagnostic | Command | Plain-English Purpose |
+Downstream trading systems need live price bars before brokers close the current candle.
+The Candle 0 engine aggregates incoming ticks in memory across nine standard timeframes (M1 to MN1).
+It calculates high, low, open, close, and volume values in real time without querying the broker database.
+WebSocket subscribers receive updated candles within milliseconds of every incoming tick.
+
+```mermaid
+flowchart LR
+    Bars["Raw MT5 Historical Bars (25,000 Bar Batches)"] --> Schema["Polars Vectorized Structuring"]
+    Schema --> TempFile["Write Staging File (.tmp.parquet)"]
+    TempFile --> AtomicRename["Atomic Filesystem Rename"]
+    AtomicRename --> FinalPath["/data/parquet/{symbol}/{timeframe}/{year}/{month}.parquet"]
+    FinalPath --> StaticHTTP["Mounted HTTP Endpoint (/static/parquet/...)"]
+    StaticHTTP --> Downstream["DuckDB Analytics / External Research"]
+```
+
+Historical ingestion jobs write price bars directly into partitioned Apache Parquet files.
+The worker writes records into temporary staging files first.
+An atomic filesystem rename moves the finished file into the target directory.
+This prevents analytical readers from encountering half-written data blocks.
+The gateway mounts `/data` onto a static HTTP route for direct file downloads.
+
+---
+
+## 4. Operational Configuration
+
+### Docker Compose Service Definition
+
+```yaml
+services:
+  market-gateway:
+    build:
+      context: apps/market-gateway
+      dockerfile: Dockerfile
+    image: metabridge5-market-gateway:latest
+    container_name: metabridge5-market-gateway
+    restart: unless-stopped
+    stop_grace_period: 45s
+    depends_on:
+      core:
+        condition: service_started
+    ports:
+      - "8000:8000"   # Public REST, WebSockets & Prometheus Metrics
+    environment:
+      - TERMINAL_GRPC_HOST=core
+      - TERMINAL_GRPC_PORT=50051
+      - METABRIDGE5_DATA_DIR=/data
+      - METABRIDGE5_API_KEY=dev_metabridge5_secret_key_123
+      - STORAGE_BACKEND=local
+      - AUDIT_LOG_SINK=sqlite
+      - TZ=UTC
+    volumes:
+      - market_data:/data
+    networks:
+      - metabridge5
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c 'import urllib.request; urllib.request.urlopen(\"http://127.0.0.1:8000/health\")' || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+```
+
+### Environment Variables
+
+| Variable | Default | Purpose |
 |---|---|---|
-| **Liveness Probe** | `curl -i http://localhost:8000/health` | Asks *"Is the API process alive and is the internal MT5 gRPC bridge responding?"* |
-| **Readiness Probe** | `curl -i http://localhost:8000/ready` | Asks *"Is the system ready to accept trading traffic and are connections initialized?"* |
-| **Pipeline Health Monitor** | `curl -s -H "X-API-Key: ..." http://localhost:8000/api/v1/pipeline/health` | Pure-verdict evaluator checking price feed freshness and detecting stuck jobs. |
-| **Live SSE Telemetry Stream** | `curl -N http://localhost:8000/api/v1/telemetry/stream` | Real-time Server-Sent Events stream yielding NDJSON events for every candle rollup. |
-| **Prometheus Metrics** | `curl -s http://localhost:8000/metrics` | Asks *"What are the tick counters, active WebSocket connections, and latency histograms?"* |
-| **Process Inspection** | `docker top metabridge5-market-node` | Asks *"Are all 6 internal processes (Supervisord, Wine, MT5, gRPC, Uvicorn, Xvfb) active in RAM?"* |
+| `TERMINAL_GRPC_HOST` | `core` | DNS hostname of the core container on network `metabridge5_net`. |
+| `TERMINAL_GRPC_PORT` | `50051` | Internal gRPC port exposed by `metabridge5-core`. |
+| `METABRIDGE5_DATA_DIR` | `/data` | Root path for Parquet datasets, JSON caches, and SQLite WAL logs. |
+| `METABRIDGE5_API_KEY` | `dev_metabridge5_secret_key_123` | Security key for authenticating incoming API requests. |
+| `STORAGE_BACKEND` | `local` | Primary storage provider: `local`, `s3`, or `github`. |
+| `AUDIT_LOG_SINK` | `sqlite` | Destination for request audit traces: `sqlite`, `external`, or `none`. |
 
-### Granular & Exclusionary Ingestion Controls
-```bash
-# Pause EURUSD ingestion individually
-curl -X POST "http://localhost:8000/api/v1/pipeline/pause?symbol=EURUSD" -H "X-API-Key: your_key"
+### Primary API Routes
 
-# Ingest ONLY USDJPY and pause all other active symbols
-curl -X POST http://localhost:8000/api/v1/pipeline/control -H "X-API-Key: your_key" \
-  -H "Content-Type: application/json" -d '{"action": "pause", "scope": "exclude", "symbols": ["USDJPY"]}'
-
-# Resume all symbols globally
-curl -X POST http://localhost:8000/api/v1/pipeline/resume -H "X-API-Key: your_key"
-```
-
-
----
-
-## 5. Documentation Hub
-
-Explore the modular technical manuals in the `docs/` folder:
-
-| Manual | Description |
-|---|---|
-| 📖 **[Architecture & System Design](docs/architecture.md)** | Container process matrix, thread safety mutex (`SafeMT5Lock`), 64MB buffers, and data flow. |
-| 🔑 **[Authentication & Volume Persistence](docs/authentication_persistence.md)** | Why portable MT5 hashes fail across OS boundaries and how Docker Named Volumes persist sessions. |
-| ⚡ **[Real-Time Streaming & Candle 0 Engine](docs/realtime_candle0_streaming.md)** | In-flight OHLCV aggregation, REST snapshots, and live WebSocket streaming contracts. |
-| 📦 **[Historical Ingestion & Backfill Pipeline](docs/historical_pipeline_ingestion.md)** | Batch chunking (100k+ candles), ISO 8601 multi-year date ranges, Snappy Parquet, and CDN purge. |
-| 📊 **[Observability, Logs & Telemetry](docs/observability_telemetry.md)** | Raw MT5 platform logs (`/api/v1/terminal/logs`), SQLite WAL audit traces, and Prometheus metrics. |
-| 📡 **[Complete API Reference Directory](docs/api_reference.md)** | Complete reference table and request/response models for all 17 REST & WebSocket routes. |
-| 💻 **[Client Integration Recipes](docs/client_integration.md)** | Code snippets for React/TradingView Lightweight Charts, Python trading bots, and DuckDB/Polars. |
+| Method | Path | Authentication | Description |
+|---|---|---|---|
+| `GET` | `/health` | No | Basic process liveness probe. |
+| `GET` | `/ready` | No | Upstream readiness probe verifying connection to Core. |
+| `GET` | `/metrics` | No | Prometheus metrics scrape endpoint. |
+| `GET` | `/api/v1/market/candle0` | Required | Current in-flight Candle 0 state for an asset. |
+| `WS` | `/api/v1/market/ws/{symbol}` | Required | Real-time WebSocket stream for ticks and candle updates. |
+| `GET` | `/api/v1/market/rates` | Required | Historical bar cache from the terminal. |
+| `POST` | `/api/v1/pipeline/backfill` | Required | Triggers on-demand historical Parquet generation. |
+| `GET` | `/static/parquet/{path}` | No | Direct HTTP download for exported Parquet dataset files. |
 
 ---
 
-## 6. Testing & Development
+## 5. Build and Test Commands
 
-### Local Validation
-```bash
-# 1. Sync virtual environment
-uv sync --project apps/market-gateway --all-groups
-
-# 2. Run linter and formatter
-uv run --project apps/market-gateway ruff check apps/market-gateway/src apps/market-gateway/tests
-uv run --project apps/market-gateway ruff format apps/market-gateway/src apps/market-gateway/tests
-
-# 3. Run unit tests
-PYTHONPATH=apps/market-gateway uv run --project apps/market-gateway pytest apps/market-gateway/tests -v
-```
-
-### Rapid Development & Improvement Loop (Zero Re-Authentication)
-When applying code changes, fixes, or new endpoints, redeploy the running container in under 5 seconds without losing session authentication:
+Run the test suite:
 
 ```bash
-make build-market-node && \
-docker rm -f metabridge5-market-node && \
-docker run -d --name metabridge5-market-node \
-  -p 8000:8000 \
-  -p 5900:5900 \
-  -v metabridge5_mt5_data:/home/wine/.wine \
-  --env-file apps/market-gateway/.env \
-  metabridge5-market-node:latest
+make test
 ```
 
----
+Build the container image:
 
-## 7. Software Engineering & Testing Standards
+```bash
+make build-gateway
+```
 
-The MetaBridge5 Market Gateway implements enterprise backend design patterns and a comprehensive 12-perspective unit testing engine:
+Verify image size against the hard 125 MB budget:
 
-* **Backend Design Patterns Applied**:
-  * **Factory & Strategy**: `StorageFactory` and `StorageBackend` strategies (`GitHub`, `S3`, `Local`).
-  * **Observer (Pub/Sub)**: `EventBroadcaster` (SSE) and `Candle0Manager` period-close callbacks.
-  * **Composite Pattern**: `CompositeAuditSink` grouping multiple telemetry destinations.
-  * **Adapter Pattern**: `TerminalGRPCClient` adapting low-level Protobuf RPC stubs.
-  * **Stream Sink Pattern**: `StreamParquetSink` chunked memory buffering, Snappy compression, and atomic upload.
-  * **Repository Pattern**: `SQLiteAuditSink` parameterized WAL queries and schema encapsulation.
-  * **Dependency Injection**: `BackfillWorker` receiving explicit service interfaces.
-* **12-Perspective Testing Engine**:
-  * Evaluates all 12 testing dimensions (Happy Path, Error Handling, Boundary Value Analysis, Edge Cases, State/FSM, Concurrency, Resource Teardown, Security/SQLi Sanitization, Idempotency, Performance Budgets, Schema Contracts, and UTC Determinism).
-  * Run perspective test suite:
-    ```bash
-    PYTHONPATH=apps/market-gateway uv run --project apps/market-gateway pytest apps/market-gateway/tests/test_perspectives_matrix.py -v
-    ```
-
-
+```bash
+make size-check
+```
