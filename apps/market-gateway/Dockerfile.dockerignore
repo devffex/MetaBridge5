@@ -1,3 +1,9 @@
-*
-!apps/market-gateway
-!apps/market-gateway/**
+.git
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+tests
+.ruff_cache

@@ -11,7 +11,7 @@ COPY --from=ghcr.io/astral-sh/uv:0.4.30 /uv /uvx /usr/bin/
 WORKDIR /build
 
 # Copy locked requirements
-COPY apps/market-gateway/pyproject.toml apps/market-gateway/uv.lock ./
+COPY pyproject.toml uv.lock ./
 
 # Create virtual environment and install frozen dependencies directly into /opt/gateway-venv
 ENV UV_PROJECT_ENVIRONMENT=/opt/gateway-venv
@@ -45,7 +45,7 @@ WORKDIR /home/app
 COPY --from=gateway-builder /opt/gateway-venv /opt/gateway-venv
 
 # Copy gateway application source code
-COPY --chown=app:app apps/market-gateway/app/ /home/app/app/
+COPY --chown=app:app app/ /home/app/app/
 
 ENV PATH="/opt/gateway-venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \

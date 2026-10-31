@@ -28,7 +28,7 @@ RUN apk add --no-cache python3 py3-pip binutils
 COPY --from=ghcr.io/astral-sh/uv:0.4.30 /uv /usr/bin/
 
 WORKDIR /build
-COPY apps/duckdb-analytics/pyproject.toml ./
+COPY pyproject.toml ./
 
 ENV UV_PROJECT_ENVIRONMENT=/opt/analytics-venv
 RUN uv venv /opt/analytics-venv && \
@@ -72,7 +72,7 @@ RUN ln -sf /usr/bin/python3 /opt/analytics-venv/bin/python && \
     ln -sf /usr/bin/python3 /opt/analytics-venv/bin/python3
 
 # Copy application source code
-COPY --chown=appuser:appuser apps/duckdb-analytics/app/ /app/app/
+COPY --chown=appuser:appuser app/ /app/app/
 
 ENV PATH="/opt/analytics-venv/bin:$PATH" \
     PYTHONPATH="/opt/analytics-venv/lib/python3.12/site-packages" \

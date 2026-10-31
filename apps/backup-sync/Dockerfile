@@ -5,7 +5,7 @@ FROM golang:1.22-alpine3.20 AS rclone-builder
 
 WORKDIR /build
 
-COPY apps/backup-sync/rclone-min/main.go ./
+COPY rclone-min/main.go ./
 RUN go mod init rclone-min && \
     go get github.com/rclone/rclone@v1.66.0 && \
     CGO_ENABLED=0 go build -ldflags "-s -w" -o /build/rclone .
@@ -24,11 +24,11 @@ RUN apk add --no-cache tini ca-certificates tzdata tar bash && \
 COPY --from=rclone-builder /build/rclone /usr/local/bin/rclone
 
 # Copy backup, restore, and sync scripts
-COPY apps/backup-sync/backup.sh /usr/local/bin/backup.sh
-COPY apps/backup-sync/restore.sh /usr/local/bin/restore.sh
-COPY apps/backup-sync/sync-parquet.sh /usr/local/bin/sync-parquet.sh
-COPY apps/backup-sync/healthcheck.sh /usr/local/bin/healthcheck.sh
-COPY apps/backup-sync/crontab /etc/crontabs/backupuser
+COPY backup.sh /usr/local/bin/backup.sh
+COPY restore.sh /usr/local/bin/restore.sh
+COPY sync-parquet.sh /usr/local/bin/sync-parquet.sh
+COPY healthcheck.sh /usr/local/bin/healthcheck.sh
+COPY crontab /etc/crontabs/backupuser
 
 RUN chmod +x /usr/local/bin/rclone \
              /usr/local/bin/backup.sh \
