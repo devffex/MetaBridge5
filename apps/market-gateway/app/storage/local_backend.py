@@ -1,4 +1,5 @@
 import logging
+import os
 from pathlib import Path
 
 from app.storage.base import StorageBackend
@@ -12,8 +13,9 @@ class LocalStorageBackend(StorageBackend):
     Used for local development, testing, and container disk staging.
     """
 
-    def __init__(self, base_dir: str = "/tmp/metabridge5_data", base_url: str = "http://localhost:8000/static"):
-        self.base_dir = Path(base_dir)
+    def __init__(self, base_dir: str | None = None, base_url: str = "http://localhost:8000/static"):
+        resolved_dir = base_dir or os.environ.get("METABRIDGE5_DATA_DIR", "/tmp/metabridge5_data")
+        self.base_dir = Path(resolved_dir)
         self.base_url = base_url.rstrip("/")
         self.base_dir.mkdir(parents=True, exist_ok=True)
         logger.info(f"Initialized LocalStorageBackend at {self.base_dir}")

@@ -1,187 +1,221 @@
-# metabridge5 Base Docker Image (`metabridge5-base`)
+# MetaBridge5 Core Appliance (`metabridge5-core`)
 
-The **MetaBridge5 Base Image** is the **Tier 1 Base Docker Image** of this codebase. It provides the unique foundational container environment for running MetaTrader 5 inside Wine and exposes a thread-safe **MT5 gRPC Bridge Daemon** on port `50051`.
-
-> [!IMPORTANT]
-> **Foundation Layer — Zero Application Code**:
-> This base image contains **no business logic or application code**. It is the shared base layer used to build any Tier 2 specialized service images (such as `metabridge5-market-node`).
-
----
-
-## 1. Role in the Two-Tier Image Architecture
+The `metabridge5-core` container provides the headless Windows emulation foundation for MetaBridge5.
+It isolates the MetaTrader 5 desktop client inside a minimal Wine runtime on Alpine Linux.
+It exposes a thread-safe gRPC daemon on internal port 50051.
+The container exposes no public HTTP routes and connects exclusively to the internal bridge network.
 
 ```mermaid
 flowchart TD
-    subgraph Tier1 ["Tier 1: Base Docker Image (metabridge5-base:latest)"]
-        direction TB
-        AlpineOS["Alpine Linux Container"]
-        WineRuntime["Wine 64-bit + Xvfb (:1) + x11vnc (:5900)"]
-        MT5Terminal["Headless MetaTrader 5 (terminal64.exe)"]
-        WinPython["Windows Python 3.11 Runtime (Embeddable)"]
-        GRPCDaemon["MT5 gRPC Bridge Daemon (Port 50051) + SafeMT5Lock Mutex"]
-        GoSupervisor["Go Supervisord Process Manager"]
-        
-        AlpineOS --> WineRuntime
-        WineRuntime --> MT5Terminal
-        WineRuntime --> WinPython
-        WinPython --> GRPCDaemon
-        GoSupervisor --> WineRuntime
-        GoSupervisor --> GRPCDaemon
+    subgraph Container ["metabridge5-core Container (:50051)"]
+        Tini["Tini Init Supervisor (PID 1)"]
+        Supervisor["Go Supervisord"]
+        Xvfb["Xvfb Display (:1, 800x600x16)"]
+        Wine["Wine 64-bit Emulation"]
+        MT5["MetaTrader 5 (terminal64.exe)"]
+        PyDaemon["Embedded Windows Python 3.11\ngRPC Daemon (Port 50051)"]
+        Seed["Prefix Template (/opt/wine-seed)"]
+
+        Tini --> Supervisor
+        Supervisor --> Xvfb
+        Supervisor --> Wine
+        Wine --> MT5
+        Wine --> PyDaemon
     end
 
-    subgraph Tier2 ["Tier 2: Purpose-Built Service Images (Built on Tier 1)"]
-        direction TB
-        MarketNode["apps/market-gateway (metabridge5-market-node)<br/>• Real-Time WebSocket Streaming<br/>• In-Flight Candle 0 Engine<br/>• Automated Historical Parquet Backfill"]
-        FutureNode1["apps/execution-node (Future Tier 2)<br/>• Dedicated Order Routing & Execution"]
-        FutureNode2["apps/analytics-node (Future Tier 2)<br/>• Dedicated Machine Learning & Indicator Processing"]
-    end
-
-    Tier1 -->|"FROM metabridge5-base:latest"| MarketNode
-    Tier1 -->|"FROM metabridge5-base:latest"| FutureNode1
-    Tier1 -->|"FROM metabridge5-base:latest"| FutureNode2
+    Volume[("mt5_account Volume\n(/home/wine/.wine)")] <--> Wine
+    Broker[("Broker Trade Servers")] <-->|"Raw Liquidity Feeds"| MT5
+    Seed -.->|"Sub-second copy on boot"| Volume
+    Gateway["metabridge5-market-gateway"] -->|"gRPC IPC (x-api-key)"| PyDaemon
 ```
-
-### Deployment Model: Isolated Server Per Tier 2 Image
-Each Tier 2 image is built on top of `metabridge5-base` and is deployed into **its own dedicated, isolated server**:
-- **Independent Lifecycles**: Redeploying or modifying a Tier 2 image does not rebuild or impact other images.
-- **Isolated MT5 Instances**: Each deployed server runs its own containerized MT5 terminal session connected to its specific broker account.
-- **Zero Resource Contention**: Each server dedicates its RAM and CPU entirely to that specific service's workload.
 
 ---
 
-## 2. Multi-Stage Build Pipeline
+## 1. Native Wheel Extraction and Build Pruning
 
-[`docker/Dockerfile.base`](docker/Dockerfile.base) uses a 4-stage build to produce a minimal, self-contained base image:
+Building Windows container dependencies normally requires running Windows Python installers inside Wine during image builds.
+That approach is slow and bloats image layers.
+Instead, the builder stage downloads compiled Windows binary wheels directly on native Linux.
+Standard decompression tools extract these archives into `/opt/metabridge5/python/Lib/site-packages`.
 
 ```mermaid
 flowchart TD
-    subgraph Stage1 ["Stage 1: Font Builder (Alpine)"]
-        Fonts["Download & Extract Microsoft Core Fonts (msttcorefonts)"]
-    end
-
-    subgraph Stage2 ["Stage 2: Python Builder (Alpine)"]
-        WinPy["Download Windows Python 3.11 Embeddable"]
-        Wheels["Download Windows AMD64 Binary Wheels<br/>(grpcio, protobuf, numpy, MetaTrader5, psutil)"]
-        Bootstrap["Unpack wheels natively on Linux & generate gRPC stubs"]
-    end
-
-    subgraph Stage3 ["Stage 3: Go Supervisor Builder (Golang Alpine)"]
-        GoSuper["Compile static lightweight supervisord binary<br/>(ochinchina/supervisord)"]
-    end
-
-    subgraph Stage4 ["Stage 4: Final Runtime Base Image (Alpine 3.20)"]
-        Runtime["Install Wine, Xvfb, x11vnc, gnutls, tzdata, xdotool"]
-        CopyBin["Copy Go supervisord binary (/usr/bin/supervisord)"]
-        CopyFonts["Copy Microsoft Core Fonts & Rebuild Font Cache"]
-        CopyScripts["Copy Base Supervisor configs & startup scripts"]
-        CopyMT5["Copy Portable MetaTrader 5 (C:\\MetaTrader5)"]
-        CopyWinPy["Copy Windows Python 3.11 Runtime (C:\\python)"]
-        CopyDaemon["Copy gRPC Daemon Source & Generated Stubs (C:\\daemon)"]
-        
-        MountInstall["Single RUN Layer:<br/>• Init Wine Prefix (wineboot --init)<br/>• Import Root Certificates (import_certs.py)<br/>• Prune __pycache__ and Unused DLLs<br/>• Strip Z:\\ Root Symlink & Lock liveupdate"]
-    end
-
-    Stage1 --> Stage4
-    Stage2 --> Stage4
-    Stage3 --> Stage4
+    PyPI["Python Package Index"] --> Downloader["Alpine Builder Stage (pip download)"]
+    Downloader --> WinWheels["Windows x86_64 Binary Wheels (.whl)"]
+    WinWheels --> NativeUnzip["Linux Unzip into /build/python/Lib/site-packages"]
+    NativeUnzip --> LinuxProtoc["Linux grpc_tools.protoc (Generates Stubs)"]
+    LinuxProtoc --> Prune["Remove Tests, Compilers & Cache"]
+    Prune --> FinalImage["Final metabridge5-core Image (527.7 MB)"]
 ```
 
----
+The build process generates protocol buffer stubs using native Linux tools before copying them to the Windows tree.
+This prevents build tools, compilers, and temporary package caches from leaking into the final runtime image.
+The final image contains only the pre-compiled Python files and the gRPC server script.
 
-## 3. Directory Layout
-
-```
-docker/
-├── Dockerfile.base         # Multi-stage base image definition
-├── README.md               # This documentation
-├── import_certs.py         # Injects system root certificates into Wine CryptoAPI
-├── supervisord.conf        # Base supervisor configuration (starts Xvfb, VNC, MT5, gRPC)
-│
-├── daemon/                 # Minimal MT5 gRPC Bridge (runs under Wine Python on port 50051)
-│   ├── protos/
-│   │   └── terminal.proto  # Canonical MT5 Protobuf Schema (Ticks, Rates, Account, Orders)
-│   ├── grpc_server.py      # Thread-safe gRPC server implementation with SafeMT5Lock
-│   ├── codegen.py          # Generates Python protobuf stubs (terminal_pb2*.py)
-│   ├── terminal_pb2.py     # Generated protobuf message classes
-│   ├── terminal_pb2_grpc.py# Generated protobuf gRPC client/server stubs
-│   └── test_client.py      # Host verification script for gRPC daemon
-│
-└── supervisord/            # Base startup and lifecycle scripts
-    ├── entrypoint.sh       # Container entrypoint with Tini init and dynamic UID remapping
-    ├── startup_guard.sh    # Pre-boot environment validator
-    ├── terminal_wrapper.sh # Signal-trapping MT5 execution wrapper
-    ├── vnc_launcher.sh     # Conditional VNC server launcher
-    ├── vnc_passwd_setup.sh # Configures VNC authentication for GUI access
-    └── xvfb_launcher.sh    # Conditional virtual display framebuffer launcher
-```
-
----
-
-## 4. Security & Optimization Features
-
-1. **Native Wheel Extraction & Codegen**: Binary Windows wheels are extracted and gRPC protobuf stubs are compiled natively on Linux in builder stages, avoiding emulated installers in Wine.
-2. **Immutable Binary Storage (`/opt/metabridge5`)**: Static binaries are isolated in `/opt/metabridge5` and mapped to virtual drive `M:`, preventing volume mounts from masking application code.
-3. **Sub-Second Prefix Seeding**: Pre-baked Wine prefix template in `/opt/wine-seed` enables sub-second cold starts with cryptographic providers pre-registered.
-4. **Filesystem Traversal Insulation (`Z:\` Drive Deletion)**: Root traversal symlink `Z:\ -> /` is permanently removed on container boot.
-5. **Disabled LiveUpdate**: MetaTrader 5 `liveupdate` directories in the installation and `AppData` paths are locked to read-only files (`chmod 444`).
-6. **Init Process Reaping**: Uses `tini` as PID 1 to reap zombie processes and forward termination signals cleanly.
-7. **Zero Bytecode Write Bloat**: Configured with `ENV PYTHONDONTWRITEBYTECODE=1` and `WINEDEBUG=-all`.
-
----
-
-## 5. How to Create New Tier 2 Images On Top of This Base
-
-To build a new specialized Tier 2 service image, create a folder under `apps/<image-name>/`:
-
-### A. Dockerfile Pattern
 ```dockerfile
-# 1. Inherit from the base image
-FROM metabridge5-base:latest
+FROM alpine:3.20 AS python-builder
 
-USER root
+RUN apk add --no-cache python3 py3-pip curl unzip && \
+    pip install --no-cache-dir --break-system-packages grpcio-tools==1.62.2
 
-# 2. Install native Linux runtime dependencies
-RUN apk add --no-cache python3 py3-pip
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/bin/
-
-# 3. Install application dependencies
-COPY pyproject.toml /tmp/
-RUN uv pip install --system --break-system-packages --no-cache -r /tmp/pyproject.toml && \
-    rm -f /tmp/pyproject.toml
-
-# 4. Copy application source code (real directories, no symlinks)
-COPY --chown=wine:wine app/ /home/wine/app/<image-name>/app/
-
-# 5. Drop application supervisor configuration into /etc/supervisor/conf.d/
-COPY --chown=wine:wine supervisord.conf /etc/supervisor/conf.d/<image-name>.conf
-
-USER wine
-# Entrypoint is inherited: /usr/bin/supervisord -c /etc/supervisord.conf
-```
-
-### B. Supervisord Drop-in Configuration (`supervisord.conf`)
-
-The base `supervisord.conf` automatically includes all `.conf` files located in `/etc/supervisor/conf.d/*.conf`:
-
-```ini
-[program:<image-name>]
-command=python3 -u /home/wine/app/<image-name>/app/main.py
-priority=6
-autorestart=true
-directory=/home/wine/app/<image-name>
-environment=MT5_GRPC_SERVER="127.0.0.1:50051"
-stdout_logfile=/dev/stdout
-stdout_logfile_maxbytes=0
-stderr_logfile=/dev/stderr
-stderr_logfile_maxbytes=0
+RUN mkdir -p /tmp/wheels && \
+    pip download --dest /tmp/wheels --only-binary=:all: \
+        --platform win_amd64 --python-version 3.11 --implementation cp --abi cp311 \
+        grpcio==1.62.2 protobuf==4.25.3 numpy==1.26.4 MetaTrader5 psutil==5.9.8 && \
+    for whl in /tmp/wheels/*.whl; do unzip -q -o "$whl" -d /tmp/python/Lib/site-packages/; done
 ```
 
 ---
 
-## 6. Building the Base Image
+## 2. Isolated Immutable Binaries and Sub-Second Seed Deployment
+
+Storing application binaries inside the default Wine prefix risks directory masking when operators mount external volumes.
+The image isolates the MetaTrader 5 installation and the Windows Python runtime in `/opt/metabridge5`.
+The container maps this directory into the virtual Windows environment as drive `M:`.
+User account mounts over `/home/wine/.wine` never overwrite or mask application code.
+
+```mermaid
+flowchart LR
+    Volume["External Account Volume (mt5_account)"] -->|"Mounted at"| Prefix["/home/wine/.wine (Registry & Account State)"]
+    SysDir["/opt/metabridge5 (Read-Only Binaries)"] -->|"Linked as Drive M:"| VirtualDrive["Virtual Windows Drive M:\\"]
+    
+    subgraph Binaries ["Immutable System Storage"]
+        VirtualDrive --> MT5["M:\\MetaTrader5\\terminal64.exe"]
+        VirtualDrive --> WinPy["M:\\python\\python.exe"]
+        VirtualDrive --> Daemon["M:\\daemon\\grpc_server.py"]
+    end
+```
+
+Empty volumes cause cold-boot delays because standard Wine initialization runs slow configuration routines.
+The image creates a pre-configured registry template inside `/opt/wine-seed` during the image build.
+On startup, the entrypoint detects empty volumes and copies the seed template in 20 milliseconds.
+This skips runtime configuration cycles and provides instant terminal boots.
 
 ```bash
-make build-base
-# Or directly:
-docker build -f docker/Dockerfile.base -t metabridge5-base:latest .
+#!/usr/bin/env bash
+set -euo pipefail
+
+WINE_PREFIX="${WINEPREFIX:-/home/wine/.wine}"
+SEED_DIR="/opt/wine-seed"
+APP_DIR="/opt/metabridge5"
+
+if [ ! -f "${WINE_PREFIX}/system.reg" ]; then
+    echo "[entrypoint] Blank volume detected. Initializing from seed template..."
+    cp -a "${SEED_DIR}/." "${WINE_PREFIX}/"
+    mkdir -p "${WINE_PREFIX}/dosdevices"
+    ln -sfn "${APP_DIR}" "${WINE_PREFIX}/dosdevices/m:"
+    rm -f "${WINE_PREFIX}/dosdevices/z:"
+    echo "[entrypoint] Seed deployment completed in sub-second time."
+fi
+```
+
+---
+
+## 3. Process Reaping and Graceful Terminal Shutdown
+
+Windows programs running under Wine can leave orphaned processes when terminating.
+The container runs Tini as PID 1 to reap zombie processes and forward operating system signals.
+When stopping the container, a shutdown trap intercepts the termination signal.
+The trap issues a standard `WM_CLOSE` message to `terminal64.exe` using `wine taskkill`.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Docker as Container Engine (docker stop)
+    participant Tini as Init Supervisor (PID 1)
+    participant Sup as Go Supervisord
+    participant Wrapper as Terminal Wrapper Script
+    participant Wine as wineserver & terminal64.exe
+
+    Docker->>Tini: Send SIGTERM Signal
+    Tini->>Sup: Forward SIGTERM to Process Group
+    Sup->>Wrapper: Stop Terminal Program
+    Wrapper->>Wine: Run wine taskkill /IM terminal64.exe (WM_CLOSE)
+    Wine->>Wine: Flush Open Charts and Write Account Data
+    Wrapper->>Wine: Run wineserver -w (Commit Registry Changes)
+    Tini->>Tini: Reap Orphaned Subprocesses
+    Tini-->>Docker: Container Stops Cleanly (Exit Code 0)
+```
+
+The graceful shutdown sequence gives the terminal time to write open databases and flush registry hives.
+Supervisord waits up to 20 seconds for the terminal process to halt.
+If the terminal stops cleanly, the wrapper calls `wineserver -w` to sync files to disk.
+
+---
+
+## 4. Operational Configuration
+
+### Docker Compose Service Definition
+
+```yaml
+services:
+  core:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.core
+    image: metabridge5-core:latest
+    container_name: metabridge5-core
+    restart: unless-stopped
+    stop_grace_period: 45s
+    ports:
+      - "127.0.0.1:5900:5900"   # VNC Remote Desktop (loopback only)
+    environment:
+      - METABRIDGE5_API_KEY=dev_metabridge5_secret_key_123
+      - VNC_PASSWORD=metabridge5pass
+      - START_VNC=false
+      - TZ=UTC
+      - WINEDEBUG=-all
+    volumes:
+      - mt5_account:/home/wine/.wine
+    networks:
+      - metabridge5
+    healthcheck:
+      test: ["CMD", "/opt/metabridge5/healthcheck.sh"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+```
+
+### Environment Variables
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `METABRIDGE5_API_KEY` | `dev_metabridge5_secret_key_123` | Authentication key required for incoming gRPC metadata calls. |
+| `START_VNC` | `false` | Enables x11vnc server on port 5900 for manual broker login setup. |
+| `VNC_PASSWORD` | `metabridge5pass` | Access password for the VNC remote desktop session. |
+| `TZ` | `UTC` | Sets container timezone for consistent log timestamps. |
+| `WINEDEBUG` | `-all` | Disables noisy Wine debug log channels. |
+
+### Network and Port Security
+
+Port 50051 binds inside the container network only.
+The service does not publish port 50051 to the host.
+Other containers on network `metabridge5_net` communicate with core using the internal DNS hostname `core:50051`.
+Port 5900 binds strictly to host loopback `127.0.0.1:5900`.
+This prevents unauthorized desktop access across public network interfaces.
+
+### Healthcheck Script
+
+The container includes a native health verification probe at `/opt/metabridge5/healthcheck.sh`.
+It verifies two conditions:
+1. It verifies that port 50051 accepts TCP socket connections on localhost.
+2. It verifies that `terminal64.exe` runs inside the active process table.
+
+If either check fails, the probe exits with status code 1.
+
+---
+
+## 5. Build and Test Commands
+
+Build the core image using the project Makefile:
+
+```bash
+make build-core
+```
+
+Verify image size against the hard 530 MB budget:
+
+```bash
+make size-check
 ```

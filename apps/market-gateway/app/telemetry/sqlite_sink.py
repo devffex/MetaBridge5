@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 import sqlite3
 import threading
 from pathlib import Path
@@ -17,7 +18,13 @@ class SQLiteAuditSink(AuditSink):
     Provides ultra-fast, local, zero-overhead storage for pipeline operations.
     """
 
-    def __init__(self, db_path: str = "/tmp/metabridge5_traces.sqlite3"):
+    def __init__(self, db_path: str | None = None):
+        if db_path is None:
+            data_dir = os.environ.get("METABRIDGE5_DATA_DIR")
+            if data_dir:
+                db_path = str(Path(data_dir) / "metabridge5_traces.sqlite3")
+            else:
+                db_path = "/tmp/metabridge5_traces.sqlite3"
         self.db_path = Path(db_path)
         self._local = threading.local()
         self._lock = threading.Lock()

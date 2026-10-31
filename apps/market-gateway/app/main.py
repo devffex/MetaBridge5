@@ -275,8 +275,9 @@ app.add_middleware(
 )
 
 # Serve generated parquet and JSON analytics datasets
-os.makedirs("/tmp/metabridge5_data", exist_ok=True)
-app.mount("/static", StaticFiles(directory="/tmp/metabridge5_data"), name="static")
+METABRIDGE5_DATA_DIR = os.environ.get("METABRIDGE5_DATA_DIR", "/tmp/metabridge5_data")
+os.makedirs(METABRIDGE5_DATA_DIR, exist_ok=True)
+app.mount("/static", StaticFiles(directory=METABRIDGE5_DATA_DIR), name="static")
 
 
 @app.get("/metrics")
@@ -304,6 +305,8 @@ def readiness_check():
     """Readiness probe checking terminal connectivity and storage."""
     if not grpc_client or not storage_backend:
         raise HTTPException(status_code=503, detail="Services not fully initialized")
+    if not grpc_client.is_connected:
+        raise HTTPException(status_code=503, detail="gRPC channel not connected to core terminal")
     daemon_health = grpc_client.get_health()
     if daemon_health.get("status") != "ok":
         raise HTTPException(status_code=503, detail="gRPC daemon not ready")
@@ -334,8 +337,20 @@ def get_terminal_logs(
     date: str | None = Query(None, description="Optional log date formatted as YYYYMMDD (default: latest)"),
 ):
     """
-    Retrieves and tails raw MetaTrader 5 daily platform journal logs.
+    Retrieves and tails raw MetaTrader 5 daily platform journal logs via gRPC.
     """
+    if grpc_client:
+        try:
+            res = grpc_client.get_terminal_logs(lines=lines, date=date)
+            return {
+                "file": res.get("file", ""),
+                "total_lines": res.get("total_lines", 0),
+                "returned_lines": res.get("returned_lines", 0),
+                "lines": res.get("logs", []),
+            }
+        except Exception as e:
+            logger.warning(f"Failed to fetch logs over gRPC: {e}. Falling back to disk inspection if present.")
+
     log_dir = Path("/home/wine/.wine/drive_c/mt5-data/logs")
     if not log_dir.exists():
         log_dir = Path("/opt/metabridge5/MetaTrader5/logs")
@@ -345,7 +360,7 @@ def get_terminal_logs(
         log_dir = Path("MetaTrader5/logs")
 
     if not log_dir.exists():
-        return {"logs": [], "message": "MetaTrader 5 log directory not found"}
+        return {"logs": [], "lines": [], "message": "MetaTrader 5 log directory not found"}
 
     if date:
         target_file = log_dir / f"{date}.log"
@@ -356,7 +371,7 @@ def get_terminal_logs(
         files = sorted(log_dir.glob("*.log"), key=lambda f: f.stat().st_mtime, reverse=True)
 
     if not files:
-        return {"logs": [], "message": "No log files available"}
+        return {"logs": [], "lines": [], "message": "No log files available"}
 
     latest_file = files[0]
     try:

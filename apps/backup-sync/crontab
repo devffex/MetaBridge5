@@ -1,0 +1,5 @@
+# Daily MT5 account volume cold backup at 22:00 UTC
+0 22 * * * /usr/local/bin/backup.sh >> /tmp/backup.log 2>&1
+
+# Hourly bandwidth-throttled Parquet synchronization
+0 * * * * /usr/local/bin/sync-parquet.sh >> /tmp/backup.log 2>&1

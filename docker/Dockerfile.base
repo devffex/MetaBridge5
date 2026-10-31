@@ -79,6 +79,7 @@ COPY docker/supervisord/xvfb_launcher.sh /opt/metabridge5/xvfb_launcher.sh
 COPY docker/supervisord/vnc_launcher.sh /opt/metabridge5/vnc_launcher.sh
 COPY docker/supervisord/terminal_wrapper.sh /opt/metabridge5/terminal_wrapper.sh
 COPY docker/supervisord/entrypoint.sh /opt/metabridge5/entrypoint.sh
+COPY docker/supervisord/healthcheck.sh /opt/metabridge5/healthcheck.sh
 COPY docker/daemon/grpc_server.py /opt/metabridge5/daemon/grpc_server.py
 
 # Copy MetaTrader 5 portable binaries
@@ -237,6 +238,9 @@ ENV METABRIDGE5_API_KEY=dev_metabridge5_secret_key_123
 WORKDIR /home/wine
 
 EXPOSE 5900 50051
+
+HEALTHCHECK --interval=15s --timeout=5s --start-period=60s --retries=3 \
+    CMD ["/opt/metabridge5/healthcheck.sh"]
 
 ENTRYPOINT ["/sbin/tini", "--", "/opt/metabridge5/entrypoint.sh"]
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisord.conf"]

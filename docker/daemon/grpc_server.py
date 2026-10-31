@@ -863,12 +863,21 @@ class TerminalServiceServicer(terminal_pb2_grpc.TerminalServiceServicer):
         )
 
     def GetTerminalLogs(self, request, context):
-        logs_dir = Path("/home/wine/.wine/drive_c/mt5-data/logs")
-        if not logs_dir.exists():
-            logs_dir = Path("/opt/metabridge5/MetaTrader5/logs")
-        if not logs_dir.exists():
-            logs_dir = Path("/home/wine/.wine/drive_c/MetaTrader5/logs")
-        if not logs_dir.exists():
+        candidate_dirs = [
+            Path("C:/mt5-data/logs"),
+            Path("M:/MetaTrader5/logs"),
+            Path("/home/wine/.wine/drive_c/mt5-data/logs"),
+            Path("/opt/metabridge5/MetaTrader5/logs"),
+            Path("/home/wine/.wine/drive_c/MetaTrader5/logs"),
+            Path("MetaTrader5/logs"),
+        ]
+        logs_dir = None
+        for cd in candidate_dirs:
+            if cd.exists():
+                logs_dir = cd
+                break
+
+        if not logs_dir:
             context.abort(grpc.StatusCode.NOT_FOUND, "Logs directory not found")
             
         log_files = sorted(logs_dir.glob("*.log"), reverse=True)
@@ -879,7 +888,13 @@ class TerminalServiceServicer(terminal_pb2_grpc.TerminalServiceServicer):
         if not terminal_logs:
             context.abort(grpc.StatusCode.NOT_FOUND, "No log files found")
             
-        target = terminal_logs[0]
+        req_date = getattr(request, "date", "").strip() if getattr(request, "date", None) else ""
+        if req_date:
+            target = logs_dir / f"{req_date}.log"
+            if not target.exists():
+                context.abort(grpc.StatusCode.NOT_FOUND, f"Log file for date {req_date} not found")
+        else:
+            target = terminal_logs[0]
         lines_count = request.lines if request.lines > 0 else 100
         
         try:

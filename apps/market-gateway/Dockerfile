@@ -28,28 +28,35 @@ RUN find /opt/gateway-venv/lib/python3.12/site-packages/botocore/data -mindepth 
 
 
 # ==========================================
-# STAGE 2: Market Node Runtime
+# STAGE 2: Market Gateway Standalone Runtime
 # ==========================================
-FROM metabridge5-base:latest
+FROM alpine:3.20 AS metabridge5-market-gateway
 
-USER root
+RUN apk add --no-cache python3 tini ca-certificates && \
+    find /usr/lib/python3.12 -type d \( -name "__pycache__" -o -name "ensurepip" -o -name "pydoc_data" -o -name "lib2to3" -o -name "turtledemo" -o -name "unittest" -o -name "test" -o -name "tests" \) -exec rm -rf {} + && \
+    find /usr/lib/python3.12 -type f \( -name "*.pyc" -o -name "*.pyo" \) -delete && \
+    adduser -D -u 1000 -h /home/app app && \
+    mkdir -p /data && \
+    chown -R app:app /data /home/app
 
-# Install minimal native Python 3 runtime (no pip, no setuptools, no build tools)
-RUN apk add --no-cache python3
+WORKDIR /home/app
 
 # Copy isolated pre-built gateway virtualenv
 COPY --from=gateway-builder /opt/gateway-venv /opt/gateway-venv
 
-# Setup gateway workspace
-RUN mkdir -p /home/wine/app/market-gateway && \
-    chown -R wine:wine /home/wine/app/market-gateway
-
 # Copy gateway application source code
-COPY --chown=wine:wine apps/market-gateway/app/ /home/wine/app/market-gateway/app/
+COPY --chown=app:app apps/market-gateway/app/ /home/app/app/
 
-# Inject supervisord configuration
-COPY --chown=wine:wine apps/market-gateway/supervisord.conf /etc/supervisor/conf.d/market-gateway.conf
+ENV PATH="/opt/gateway-venv/bin:$PATH" \
+    PYTHONUNBUFFERED=1 \
+    METABRIDGE5_DATA_DIR=/data \
+    MT5_GRPC_SERVER=metabridge5-core:50051
 
+USER app
 EXPOSE 8000
 
-# Entrypoint and CMD inherited from metabridge5-base: /sbin/tini -- /opt/metabridge5/entrypoint.sh
+HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
+    CMD ["wget", "-q", "--spider", "http://127.0.0.1:8000/health"]
+
+ENTRYPOINT ["/sbin/tini", "--"]
+CMD ["/opt/gateway-venv/bin/python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
